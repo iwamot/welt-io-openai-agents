@@ -1,48 +1,142 @@
-# repo-template
+# welt-io-openai-agents
 
-Starter template for repositories in iwamot's ecosystem.
+[![pypi](https://img.shields.io/pypi/v/welt-io-openai-agents.svg)](https://pypi.org/project/welt-io-openai-agents/)
+[![python](https://img.shields.io/pypi/pyversions/welt-io-openai-agents.svg)](https://pypi.org/project/welt-io-openai-agents/)
+[![openai-agents](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fwelt-io-openai-agents%2Fjson&search=openai-agents%28%3E%3D%5B%5Cd.%5D%2B%29&replace=%241&label=openai-agents)](https://pypi.org/project/openai-agents/)
 
-## Files
+The [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) (Python) adapter for [Welt](https://github.com/iwamot/welt)'s wire contract.
 
-| Path | Purpose |
-|------|---------|
-| `.github/Oidefile` | Manifest of files this template distributes. `oide.yml` pulls every listed path into derived repos. |
-| `.github/release.yml` | GitHub auto-generated release notes categorization (Features / Dependencies). |
-| `.github/renovate.json` | Extends the `iwamot/renovate-config` preset. |
-| `.github/workflows/auto-label.yml` | Labels PRs from their Conventional Commit title. |
-| `.github/workflows/dco.yml` | Checks that every PR commit carries a DCO sign-off. |
-| `.github/workflows/dependabot-auto-merge.yml` | Auto-merges Dependabot PRs. |
-| `.github/workflows/dependency-review.yml` | Vulnerability and license review on PRs. |
-| `.github/workflows/oide.yml` | Pulls the files listed in `.github/Oidefile` from this template. See [Staying in sync](#staying-in-sync). |
-| `.github/workflows/release.yml` | Creates a GitHub Release when a `v*` tag is pushed. |
-| `.github/workflows/renovate.yml` | Self-hosted Renovate runner (hourly + on push to main). |
-| `.github/workflows/validate.yml` | Runs `validate.sh` on push and PR via `iwamot/workflows`. |
-| `CONTRIBUTING.md` | Contribution guide: local setup, DCO, and Conventional Commits. |
-| `LICENSE` | Project license. |
-| `SECURITY.md` | Minimal security policy. Directs vulnerability reports to GitHub Security Advisories. |
-| `mise.toml` | Pins mise minimum version and includes shared tasks from `iwamot/mise-tasks`. |
-| `validate.sh` | Lint entry point invoked by `iwamot/actions/mise-validate`. Add repo-specific lint at the marked location. |
+## Install
 
-## Staying in sync
+```bash
+uv add welt-io-openai-agents
+```
 
-This template owns the shared governance files — the paths listed in `.github/Oidefile`. Derived repositories track it through two automated flows:
+## Usage
 
-- **Governance files** — `.github/workflows/oide.yml` runs [`iwamot/oide`](https://github.com/iwamot/oide), which pulls every path listed in `.github/Oidefile` from this template and opens a PR. Its `TEMPLATE_VERSION` pin is tracked by Renovate, so tagging a new template release bumps the pin, which triggers the pull. `.github/Oidefile` lists itself, so adding a path to the template's manifest propagates to every derived repo in one pull.
-- **Version pins** — Renovate keeps the action SHAs in `.github/workflows/*.yml` and the task ref in `mise.toml` current.
+See [`examples/agent`](examples/agent) — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools), with the model on Amazon Bedrock's OpenAI-compatible endpoint. The sections below explain the adapters it wires in.
 
-## Post-creation setup
+## Supported Versions
 
-After clicking **Use this template**:
+### Welt
 
-1. **Replace this README.md** with the new repository's own description.
-2. **Install the Renovate App** (or your self-hosted equivalent) for the new repo.
-3. **Create a GitHub Environment** for Renovate (default name: `production`, override via the `environment` input on `renovate.yml` if needed) and add environment-scoped secrets:
-   - `RENOVATE_APP_CLIENT_ID`
-   - `RENOVATE_APP_PRIVATE_KEY`
-4. **Add a release workflow** if the repo ships artifacts. These also take an `environment` input — create additional environments as needed:
-   - `iwamot/workflows/.github/workflows/release-ghcr.yml` for GHCR
-   - `iwamot/workflows/.github/workflows/release-ecr-public.yml` for ECR Public
-   - `iwamot/workflows/.github/workflows/release-homebrew-tap.yml` for Homebrew tap
-5. **Add language-specific files** as needed: `Dockerfile`, `package.json`, `pyproject.toml`, `.gitignore`, etc.
-6. **Extend `validate.sh`** with repo-specific lint (e.g. `mise run docker-lint Dockerfile`, language linters).
-7. **Review `mise.toml`'s `min_version`**: the template provides a default, but the minimum mise version is each repository's own decision. Bump it if your tasks require a newer feature, or drop it if no constraint is needed. This is *not* auto-bumped by Renovate.
+While both are 0.x, a welt-io-openai-agents 0.Y release supports Welt v0.Y. From 1.0 on, a release supports any Welt release that shares its major version, and the minor versions move independently. Support is best effort either way, and other combinations come with no guarantee.
+
+### OpenAI Agents SDK
+
+The badge at the top states the range this release installs against. Every push and pull request runs the suite at both ends of it: the declared floor, and the newest release CI has picked up. That is best effort rather than a guarantee — the floor is where the suite was last seen to pass, so a later release may raise it, and no ceiling is declared at all. `openai` comes along as a dependency and carries no floor of its own, because the Agents SDK asks for a newer one than anything here needs.
+
+The badge follows the current release. For the range an older release declared, read that release's own metadata on PyPI.
+
+Something misbehaving inside that range is worth an [issue](https://github.com/iwamot/welt-io-openai-agents/issues).
+
+## API
+
+The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain OpenAI Agents SDK values do not fit it in either direction. Two functions adapt the inbound payload, one the outbound stream.
+
+### Inbound
+
+#### `decode_messages(messages)`
+
+Turns Welt's Converse-shaped messages — built from the Slack thread, file bytes base64-encoded — into role/content input items that feed `Runner.run_streamed` as-is:
+
+| Converse block | Responses API input |
+|---|---|
+| Text | `input_text` |
+| Image | `input_image` (a data URL) |
+| Document | `input_file` (a data URL, the document's name carried as `filename`) |
+| Video | Refused — the Responses API has no video input |
+
+Each file-carrying block becomes the data URL the Responses API expects in place of the Converse format token, and the base64 data stays base64 — a data URL carries it as it came. A video block raises `ValueError` rather than dropping silently: there is nothing to rebuild one into, and a silent drop would leave the model answering a conversation with a piece missing.
+
+#### `decode_interrupt_responses(responses, state)`
+
+Applies Welt's resume payload — a mapping of interrupt id to the answer a human chose and the widget it came from — to the `RunState` the interrupted run left behind, and returns that state, which feeds `Runner.run_streamed` directly, answering every pending question at once:
+
+```python
+pending = state.get_interruptions()  # read before decoding, for renderable_events
+decode_interrupt_responses(payload["interrupt_responses"], state)
+result = Runner.run_streamed(agent, state)
+```
+
+The SDK resumes from the state rather than from a payload, which is why this adapter takes both arguments where its siblings take one. The widget decides what each answer means:
+
+| Answer | Applied as |
+|---|---|
+| The **Approve** button | `state.approve(...)` — the tool runs as the model called it |
+| The **Reject** button | `state.reject(...)` — the tool does not run; the model is told it was rejected |
+| Typed text | `state.reject(..., rejection_message=text)` — the tool does not run; the typed text reaches the model as the tool's result |
+
+A press is identified by the widget it came from — Welt says which widget produced each answer, so a typed "approve" is read where meaning belongs: it reaches the model as the tool's answer. An answer whose id names no pending approval of the state raises `ValueError`, since resuming the wrong run would act on questions nobody was asked.
+
+The interrupt ids are the tool calls' own ids, as emitted by `renderable_events`; the state is the host app's to stash when an interrupt event goes by (see the [example agent](examples/agent)).
+
+#### What arrives is taken as correct
+
+Welt builds the payload and checks its own output against the wire contract before releasing it, so these two functions do no field validation of their own. A payload that departs from the contract is a bug on the sending side rather than an input to guard against, and it surfaces as an ordinary error from whatever touches it first — a `KeyError` or a `TypeError` here, or a refusal from the SDK or the model's endpoint further on.
+
+The one thing `decode_messages` refuses outright is a content block of a kind Welt never sends. A `messages` turn carries only `text`, `image`, `document`, and `video` blocks; a `toolUse` or `toolResult` block is not a malformed one of those but a forged conversation turn, and rebuilt into history it would let a caller that is not Welt put words the model treats as its own past tool calls and their results into the run. It raises `ValueError`. This is a trust-boundary check, not the field validation the contract otherwise saves you from.
+
+### Outbound
+
+#### `renderable_events(result, files_from=..., pending_approvals=...)`
+
+Reduces a `Runner.run_streamed` result — whose stream events wrap values Welt does not render — to the events Welt renders:
+
+| The run emits | On the wire | In the Slack thread |
+|---|---|---|
+| Text and refusal deltas | `data` | The streamed reply (a refusal is the model's reply too) |
+| Tool calls and tool outputs | `current_tool_use` / `tool_result` | "Using tool" indicators (tool output stays off the wire) |
+| File and image content a tool named in `files_from` returned | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
+| Pending tool approvals | `interrupt` | An approval question (see below) |
+
+Reasoning deltas stay off the wire: models like gpt-oss think aloud before they answer, and the wire has no place for reasoning — only the answer streams.
+
+A tool hands files to the model for either of two reasons — to have it read them, or to give them to the human — and only the agent knows which is which, so name the tools whose files belong in the thread:
+
+```python
+async for event in renderable_events(result, files_from={"create_sample_file"}):
+```
+
+A tool left out keeps its files to the model: one that reads a PDF for the model does not drop it into the thread as a side effect. A tool named there returns the file as file content, which the model reads and Welt uploads:
+
+```python
+return [
+    {"type": "text", "text": "Created sample.csv."},
+    {
+        "type": "file",
+        "filename": "sample.csv",
+        "file_data": b64encode(csv).decode("ascii"),
+    },
+]
+```
+
+Uploaded names come from the part's own `filename`; parts without one are named by their media type when a data URL carries it (`file.pdf`, `image.png`). A part pointing at its file instead — a file id, an http URL — carries nothing to upload and stays off the wire.
+
+One caveat: whether a tool may return file content at all is the model endpoint's call, not this adapter's. The OpenAI platform accepts it; Bedrock's OpenAI-compatible endpoint takes a tool's output only as a string and rejects the request otherwise — so on Bedrock a tool cannot hand the model a file, and a file for the thread goes on the wire as a `file` event the host app yields itself, beside the events this function produces. The [example agent](examples/agent) shows that pattern.
+
+The stream names the tool behind each output itself, except on a resumed run, where the approved tools' calls streamed before the interrupt: `pending_approvals` — the interruptions of the state being resumed, read before the answers are decoded — names those.
+
+Each event carries only what Welt reads, and an event with nothing to render — a delta the model left empty, a file with no bytes — is not sent at all.
+
+## Gating tools with `needs_approval`
+
+The SDK's interrupts are tool approvals: a tool declares `needs_approval=True` (or a callable deciding per call), and the run pauses before the tool's body starts — the tool itself carries no approval code, which is what lets a tool the agent did not write, from a library or an MCP server, be gated the same way. It works over Welt as-is:
+
+```python
+@function_tool(needs_approval=True)
+def sample_dangerous_action(action: str) -> str:
+    ...
+```
+
+A run that stops on approvals ends its stream with one `interrupt` event per pending approval. There is no free-form interrupt in this SDK — no agent code declares a question of its own — so the question's shape is this adapter's, not the agent author's: the call's name and arguments as the message, **Approve** / **Reject** buttons, and a free-text field for answering on the tool's behalf. The [inbound table](#decode_interrupt_responsesresponses-state) shows what each answer does; [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) covers the Slack side — how the question renders, who can answer, multiple questions, and expiry.
+
+On the SDK side:
+
+- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`; the host app stashes it, applies the answers with `decode_interrupt_responses`, and runs the same agent again with the state as input. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM.
+- **Welt resumes once every question is answered.** There is no partial resume on the wire, so the state's approvals are all applied in one call.
+- **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, so hand `renderable_events` the state's interruptions as `pending_approvals` — that is how their files keep flowing on resume.
+
+## License
+
+MIT
