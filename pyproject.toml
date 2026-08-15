@@ -21,9 +21,9 @@ classifiers = [
 ]
 dependencies = [
     # Imported directly: the reply stream is read as the SDK's own stream
-    # event and run item types. 0.19.4 is the oldest version the test suite
+    # event and run item types. 0.18.1 is the oldest version the test suite
     # passes against.
-    "openai-agents>=0.19.4",
+    "openai-agents>=0.18.1",
     # Imported directly: the delta events the stream wraps are OpenAI's own
     # types. No floor of its own — the Agents SDK decides which version
     # arrives, and it asks for a newer one than anything here needs.

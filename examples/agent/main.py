@@ -19,6 +19,7 @@ import os
 from base64 import b64encode
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import boto3
 from agents import (
@@ -95,6 +96,54 @@ def create_sample_file() -> str:
     )
 
 
+def _document_name(stem: str) -> str:
+    """
+    Name a report apart from every other report of the run.
+
+    One turn can publish several reports ("apple and banana, separately"),
+    and the thread tells the uploads apart by name alone.
+
+    Args:
+        stem (str): The name's fixed part.
+
+    Returns:
+        str: The stem with a random tail.
+    """
+    return f"{stem}-{uuid4().hex[:8]}"
+
+
+@function_tool(needs_approval=True)
+def sample_draft_report(topic: str, draft: str) -> str:
+    """
+    Publish a small report on a topic.
+
+    Draft the full report body and pass it as `draft`; a human reviews the
+    draft before it is published.
+
+    The sibling examples draft inside the tool and pause to show the
+    draft. This SDK pauses before the tool starts, and the question shows
+    the call's arguments — so here the model drafts, and the draft rides
+    the arguments into the question. What the human approved is what
+    publishes: an approved call resumes with the arguments it was shown
+    with, so no memoization guards the draft the way the siblings need.
+
+    Args:
+        topic (str): The report topic.
+        draft (str): The full report body, ready to publish.
+
+    Returns:
+        str: The outcome of the publish.
+    """
+    name = _document_name("report")
+    _pending_files.append(
+        {"name": f"{name}.md", "bytes": b64encode(draft.encode()).decode("ascii")}
+    )
+    return (
+        f"Published the approved draft to the Slack thread as {name}.md."
+        " The publish flow is complete; nothing is left to approve."
+    )
+
+
 @function_tool(needs_approval=True)
 def sample_dangerous_action(action: str) -> str:
     """
@@ -123,6 +172,16 @@ _REGION = boto3.Session().region_name or "us-east-1"
 
 agent = Agent(
     name="welt-example",
+    # A rejected approval reaches the model as the tool's result ("Tool
+    # execution was not approved."), and models of several families read
+    # right past it, reporting the action as completed. The rule exists
+    # because nothing else in the conversation marks the call as unrun.
+    instructions=(
+        'When a tool call\'s result says its execution "was not approved",'
+        " that tool did not run. Say plainly that the action was not"
+        " performed — never describe it as completed, in progress, or"
+        " pending."
+    ),
     model=OpenAIResponsesModel(
         # Any model on the endpoint's /v1/models listing the account may
         # invoke; an empty MODEL_ID means unset, like Welt's own variables.
@@ -132,7 +191,12 @@ agent = Agent(
             api_key=os.environ["AWS_BEARER_TOKEN_BEDROCK"],
         ),
     ),
-    tools=[current_time, create_sample_file, sample_dangerous_action],
+    tools=[
+        current_time,
+        create_sample_file,
+        sample_draft_report,
+        sample_dangerous_action,
+    ],
 )
 
 
