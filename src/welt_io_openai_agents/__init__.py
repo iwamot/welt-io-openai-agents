@@ -171,12 +171,8 @@ def _decoded_block(block: dict) -> dict:
     raise ValueError("the Responses API has no video input")
 
 
-# The widget names Welt's resume payload uses.
-_OPTION_SOURCE = "option"
-
 # The button values of the approval question this adapter builds, matched
-# against the answer on the way back. A press and a typed answer are told
-# apart by the widget Welt names, not by the value.
+# against the answer on the way back.
 _APPROVE = "approve"
 _REJECT = "reject"
 
@@ -193,9 +189,7 @@ class _InterruptedState(Protocol):
 
     def approve(self, approval_item: ToolApprovalItem) -> None: ...
 
-    def reject(
-        self, approval_item: ToolApprovalItem, *, rejection_message: str | None = None
-    ) -> None: ...
+    def reject(self, approval_item: ToolApprovalItem) -> None: ...
 
 
 def decode_interrupt_responses[StateT: _InterruptedState](
@@ -212,13 +206,8 @@ def decode_interrupt_responses[StateT: _InterruptedState](
     `Runner.run_streamed` directly, answering every pending question at
     once.
 
-    The widget decides: a pressed button is one of the two decisions the
-    question offered, and a submitted text field rejects the call with the
-    typed text as the rejection message — the SDK sends that text back to
-    the model in place of the tool's result, which is the human answering
-    on the tool's behalf, carried untouched since what a typed answer
-    means is for the agent to decide. A pressed button that carries
-    neither decision came from no question this adapter built, and
+    An answer is one of the two decisions the question offered. A value
+    that carries neither came from no question this adapter built, and
     rejecting is the direction that does not act on an answer nobody can
     read.
 
@@ -240,9 +229,7 @@ def decode_interrupt_responses[StateT: _InterruptedState](
         item = pending.get(interrupt_id)
         if item is None:
             raise ValueError(f"no pending approval for interrupt id: {interrupt_id}")
-        if answer["source"] != _OPTION_SOURCE:
-            state.reject(item, rejection_message=answer["value"])
-        elif answer["value"] == _APPROVE:
+        if answer["value"] == _APPROVE:
             state.approve(item)
         else:
             state.reject(item)
@@ -280,7 +267,7 @@ async def renderable_events(
     that stops on tool approvals ends with one `interrupt` event per
     pending approval, read from the run after its stream closes — the
     reason renders in Slack as the call's name and arguments over
-    **Approve** / **Reject** buttons and a free-text field.
+    **Approve** / **Reject** buttons.
 
     Which of the agent's files belong in the reply is the agent's call, so
     a tool's files become `file` events only when the tool is named in
@@ -367,9 +354,10 @@ def _approval_reason(approval: ToolApprovalItem) -> dict:
     question of its own — so the question's shape is fixed here: the
     call's name and arguments as the message, the two decisions the state
     resumes from as buttons carrying the values that identify them on the
-    way back, and a free-text field for the human answering on the tool's
-    behalf, labelled by Welt since what an answer means is the agent's
-    call.
+    way back. Deliberately no free-text field: the SDK runs an approved
+    tool with its original arguments or skips it, so typed text has
+    nowhere to go — a field would collect answers that can only reject,
+    and one that reads as consent ("yes!") would reject all the same.
 
     Args:
         approval (ToolApprovalItem): The pending approval.
@@ -388,7 +376,6 @@ def _approval_reason(approval: ToolApprovalItem) -> dict:
             {"value": _APPROVE, "label": "Approve", "style": "primary"},
             {"value": _REJECT, "label": "Reject", "style": "danger"},
         ],
-        "input": {},
     }
 
 

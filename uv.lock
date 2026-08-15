@@ -1265,7 +1265,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "openai" },
-    { name = "openai-agents", specifier = ">=0.19.4" },
+    { name = "openai-agents", specifier = ">=0.18.1" },
 ]
 
 [package.metadata.requires-dev]

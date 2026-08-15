@@ -348,7 +348,6 @@ def test_a_pending_approval_ends_the_stream_as_an_interrupt() -> None:
                     {"value": "approve", "label": "Approve", "style": "primary"},
                     {"value": "reject", "label": "Reject", "style": "danger"},
                 ],
-                "input": {},
             },
         }
     }

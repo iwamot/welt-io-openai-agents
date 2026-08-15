@@ -193,7 +193,6 @@ def test_the_stop_asks_one_question_per_approval() -> None:
                         {"value": "approve", "label": "Approve", "style": "primary"},
                         {"value": "reject", "label": "Reject", "style": "danger"},
                     ],
-                    "input": {},
                 },
             }
         },
@@ -226,17 +225,16 @@ def test_rejection_keeps_the_tool_unrun() -> None:
     assert outputs[0]["call_id"] == "call_1"
 
 
-def test_typed_text_reaches_the_model_as_the_tools_answer() -> None:
+def test_a_button_this_adapter_never_built_rejects_too() -> None:
     agent, _, state = interrupted()
 
     seen, _ = resumed(
-        agent, state, {"call_1": {"value": "not now, ask Bob", "source": "input"}}
+        agent, state, {"call_1": {"value": "something else", "source": "option"}}
     )
 
     assert ran == []
     outputs = function_call_outputs(seen)
     assert len(outputs) == 1
-    assert outputs[0]["output"] == "not now, ask Bob"
 
 
 def test_an_unasked_question_cannot_be_answered() -> None:
