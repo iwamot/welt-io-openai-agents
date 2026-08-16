@@ -10,6 +10,7 @@ mise install
 uv sync
 uv run pip-licenses --partial-match --allow-only="Apache;BSD;CNRI-Python;ISC;MIT;MPL;PSF;Python Software Foundation"
 uv audit
+uv-override-prune --fix
 ruff check --fix
 ruff format
 ty check --error-on-warning
