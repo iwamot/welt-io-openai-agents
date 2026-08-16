@@ -10,25 +10,20 @@ resume the run with the decision each stands for.
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator
 
 import pytest
 from agents import (
     Agent,
-    Model,
-    ModelResponse,
     Runner,
     RunState,
     function_tool,
     set_tracing_disabled,
 )
-from openai.types.responses import (
-    Response,
-    ResponseCompletedEvent,
-    ResponseFunctionToolCall,
-    ResponseOutputMessage,
-    ResponseOutputText,
-    ResponseTextDeltaEvent,
+from agents.testing import (
+    ModelStep,
+    ScriptedModel,
+    assistant_message,
+    function_call,
 )
 
 from welt_io_openai_agents import decode_interrupt_responses, renderable_events
@@ -54,75 +49,20 @@ def risky(action: str) -> list[dict]:
     ]
 
 
-def _response(output: list) -> Response:
-    return Response(
-        id="resp_1",
-        created_at=0,
-        model="scripted",
-        object="response",
-        output=output,
-        parallel_tool_calls=False,
-        tool_choice="auto",
-        tools=[],
-    )
+def scripted() -> ScriptedModel:
+    """Call the gated tool on the first turn, close on the second.
 
-
-class ScriptedModel(Model):
-    """Calls the gated tool on its first turn, closes on the second.
-
-    The input of every turn is kept, so a test can read what the resumed
-    model was told about the tool call it never saw finish.
+    The SDK builds the stream a real backend would send around each step's
+    output, so the adapter reads the same event sequence here as in a run.
     """
-
-    def __init__(self) -> None:
-        self.seen_inputs: list = []
-
-    async def get_response(self, *args: object, **kwargs: object) -> ModelResponse:
-        raise NotImplementedError("the round trip streams")
-
-    async def stream_response(
-        self, *args: object, **kwargs: object
-    ) -> AsyncIterator[ResponseCompletedEvent | ResponseTextDeltaEvent]:
-        self.seen_inputs.append(args[1])
-        if len(self.seen_inputs) == 1:
-            output: list = [
-                ResponseFunctionToolCall(
-                    arguments='{"action": "wipe"}',
-                    call_id="call_1",
-                    name="risky",
-                    type="function_call",
-                )
-            ]
-        else:
-            # A real backend streams the text ahead of the completed
-            # response that repeats it.
-            yield ResponseTextDeltaEvent(
-                content_index=0,
-                delta="Done.",
-                item_id="msg_1",
-                logprobs=[],
-                output_index=0,
-                sequence_number=0,
-                type="response.output_text.delta",
-            )
-            output = [
-                ResponseOutputMessage(
-                    id="msg_1",
-                    content=[
-                        ResponseOutputText(
-                            annotations=[], text="Done.", type="output_text"
-                        )
-                    ],
-                    role="assistant",
-                    status="completed",
-                    type="message",
-                )
-            ]
-        yield ResponseCompletedEvent(
-            response=_response(output),
-            sequence_number=0,
-            type="response.completed",
-        )
+    return ScriptedModel(
+        [
+            ModelStep(
+                output=[function_call("risky", {"action": "wipe"}, call_id="call_1")]
+            ),
+            ModelStep(output=[assistant_message("Done.", item_id="msg_1")]),
+        ]
+    )
 
 
 def interrupted() -> tuple[Agent, list[dict], RunState]:
@@ -132,7 +72,7 @@ def interrupted() -> tuple[Agent, list[dict], RunState]:
         The agent, the wire events of the stopped turn, and its RunState.
     """
     ran.clear()
-    agent = Agent(name="round-trip", model=ScriptedModel(), tools=[risky])
+    agent = Agent(name="round-trip", model=scripted(), tools=[risky])
 
     async def turn() -> tuple[list[dict], RunState]:
         result = Runner.run_streamed(agent, "please wipe")
@@ -161,7 +101,7 @@ def resumed(agent: Agent, state: RunState, answers: dict) -> tuple[list, list[di
         ]
         model = agent.model
         assert isinstance(model, ScriptedModel)
-        return model.seen_inputs[-1], events
+        return list(model.calls[-1].input), events
 
     return asyncio.run(turn())
 
