@@ -50,7 +50,7 @@ dev = [
     # Pinned even though it arrives through openai-agents, for the same
     # reason as boto3: the package declares a range for it, and CI should
     # name the version it uses.
-    "openai==2.54.0",
+    "openai==3.1.0",
     # compatibility.sh reads the declared floors with it. Pinned even though it
     # arrives through pytest, so CI names the version it uses.
     "packaging==26.3",
