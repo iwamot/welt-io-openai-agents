@@ -129,10 +129,8 @@ def test_the_stop_asks_one_question_per_approval() -> None:
                     "message": (
                         'May I run `risky`?\n```\n{\n  "action": "wipe"\n}\n```'
                     ),
-                    "options": [
-                        {"value": "approve", "label": "Approve", "style": "primary"},
-                        {"value": "reject", "label": "Reject", "style": "danger"},
-                    ],
+                    "approve": {},
+                    "reject": {},
                 },
             }
         },
@@ -143,9 +141,7 @@ def test_the_stop_asks_one_question_per_approval() -> None:
 def test_approval_runs_the_tool_and_releases_its_files() -> None:
     agent, _, state = interrupted()
 
-    _, events = resumed(
-        agent, state, {"call_1": {"value": "approve", "source": "option"}}
-    )
+    _, events = resumed(agent, state, {"call_1": {"value": True, "source": "option"}})
 
     assert ran == ["wipe"]
     assert {"tool_result": {"toolUseId": "call_1", "status": "success"}} in events
@@ -156,7 +152,7 @@ def test_approval_runs_the_tool_and_releases_its_files() -> None:
 def test_rejection_keeps_the_tool_unrun() -> None:
     agent, _, state = interrupted()
 
-    seen, _ = resumed(agent, state, {"call_1": {"value": "reject", "source": "option"}})
+    seen, _ = resumed(agent, state, {"call_1": {"value": False, "source": "option"}})
 
     assert ran == []
     # The model is told the call was rejected, as the call's output.
@@ -182,5 +178,5 @@ def test_an_unasked_question_cannot_be_answered() -> None:
 
     with pytest.raises(ValueError, match="call_404"):
         decode_interrupt_responses(
-            {"call_404": {"value": "approve", "source": "option"}}, state
+            {"call_404": {"value": True, "source": "option"}}, state
         )

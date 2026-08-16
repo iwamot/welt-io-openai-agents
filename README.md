@@ -59,12 +59,12 @@ decode_interrupt_responses(payload["interrupt_responses"], state)
 result = Runner.run_streamed(agent, state)
 ```
 
-The SDK resumes from the state rather than from a payload, which is why this adapter takes both arguments where its siblings take one. Each answer is one of the two buttons the question offered:
+The SDK resumes from the state rather than from a payload, which is why this adapter takes both arguments where its siblings take one. Each answer is one of the two buttons the question asked Welt for:
 
 | Answer | Applied as |
 |---|---|
-| The **Approve** button | `state.approve(...)` — the tool runs as the model called it |
-| The **Reject** button | `state.reject(...)` — the tool does not run; the model is told it was rejected |
+| Welt's approve button (`true`) | `state.approve(...)` — the tool runs as the model called it |
+| Welt's reject button (`false`) | `state.reject(...)` — the tool does not run; the model is told it was rejected |
 
 An answer whose id names no pending approval of the state raises `ValueError`, since resuming the wrong run would act on questions nobody was asked.
 
@@ -128,7 +128,7 @@ def sample_dangerous_action(action: str) -> str:
     ...
 ```
 
-A run that stops on approvals ends its stream with one `interrupt` event per pending approval. There is no free-form interrupt in this SDK — no agent code declares a question of its own — so the question's shape is this adapter's, not the agent author's: the call's name and arguments as the message, over **Approve** / **Reject** buttons. Deliberately no free-text field: the SDK runs an approved tool with its original arguments or skips it, so typed text has nowhere to go — a field would collect answers that can only reject, and one that reads as consent ("yes!") would reject all the same. The [inbound table](#decode_interrupt_responsesresponses-state) shows what each answer does; [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) covers the Slack side — how the question renders, who can answer, multiple questions, and expiry.
+A run that stops on approvals ends its stream with one `interrupt` event per pending approval. There is no free-form interrupt in this SDK — no agent code declares a question of its own — so the question's shape is this adapter's, not the agent author's: the call's name and arguments as the message, over the approve and reject buttons it asks Welt for by name, so that what approval is called stays Welt's to say (and a deployment's to translate). Deliberately no free-text field: the SDK runs an approved tool with its original arguments or skips it, so typed text has nowhere to go — a field would collect answers that can only reject, and one that reads as consent ("yes!") would reject all the same. The [inbound table](#decode_interrupt_responsesresponses-state) shows what each answer does; [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) covers the Slack side — how the question renders, who can answer, multiple questions, and expiry.
 
 On the SDK side:
 

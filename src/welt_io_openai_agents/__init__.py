@@ -171,12 +171,6 @@ def _decoded_block(block: dict) -> dict:
     raise ValueError("the Responses API has no video input")
 
 
-# The button values of the approval question this adapter builds, matched
-# against the answer on the way back.
-_APPROVE = "approve"
-_REJECT = "reject"
-
-
 class _InterruptedState(Protocol):
     """What `decode_interrupt_responses` uses of the interrupted RunState.
 
@@ -206,10 +200,10 @@ def decode_interrupt_responses[StateT: _InterruptedState](
     `Runner.run_streamed` directly, answering every pending question at
     once.
 
-    An answer is one of the two decisions the question offered. A value
-    that carries neither came from no question this adapter built, and
-    rejecting is the direction that does not act on an answer nobody can
-    read.
+    The question asks Welt for its own approve and reject buttons, which
+    answer with `True` and `False`. A value carrying neither came from no
+    question this adapter built, and rejecting is the direction that does
+    not act on an answer nobody can read.
 
     Args:
         responses (dict): The `interrupt_responses` value of Welt's
@@ -229,7 +223,7 @@ def decode_interrupt_responses[StateT: _InterruptedState](
         item = pending.get(interrupt_id)
         if item is None:
             raise ValueError(f"no pending approval for interrupt id: {interrupt_id}")
-        if answer["value"] == _APPROVE:
+        if answer["value"] is True:
             state.approve(item)
         else:
             state.reject(item)
@@ -266,8 +260,8 @@ async def renderable_events(
     returned). Reasoning deltas and everything else are dropped. A run
     that stops on tool approvals ends with one `interrupt` event per
     pending approval, read from the run after its stream closes — the
-    reason renders in Slack as the call's name and arguments over
-    **Approve** / **Reject** buttons.
+    reason renders in Slack as the call's name and arguments over the
+    approve and reject buttons Welt words itself.
 
     Which of the agent's files belong in the reply is the agent's call, so
     a tool's files become `file` events only when the tool is named in
@@ -352,12 +346,13 @@ def _approval_reason(approval: ToolApprovalItem) -> dict:
 
     The SDK's interrupts are tool approvals — no agent code declares a
     question of its own — so the question's shape is fixed here: the
-    call's name and arguments as the message, the two decisions the state
-    resumes from as buttons carrying the values that identify them on the
-    way back. Deliberately no free-text field: the SDK runs an approved
-    tool with its original arguments or skips it, so typed text has
-    nowhere to go — a field would collect answers that can only reject,
-    and one that reads as consent ("yes!") would reject all the same.
+    call's name and arguments as the message, and the two decisions the
+    state resumes from asked of Welt by name, so that what approval is
+    called stays Welt's to say. Deliberately no free-text field: the SDK
+    runs an approved tool with its original arguments or skips it, so
+    typed text has nowhere to go — a field would collect answers that can
+    only reject, and one that reads as consent ("yes!") would reject all
+    the same.
 
     Args:
         approval (ToolApprovalItem): The pending approval.
@@ -370,13 +365,7 @@ def _approval_reason(approval: ToolApprovalItem) -> dict:
     arguments = _formatted_arguments(approval.raw_item)
     if arguments:
         message = f"{message}\n```\n{arguments}\n```"
-    return {
-        "message": message,
-        "options": [
-            {"value": _APPROVE, "label": "Approve", "style": "primary"},
-            {"value": _REJECT, "label": "Reject", "style": "danger"},
-        ],
-    }
+    return {"message": message, "approve": {}, "reject": {}}
 
 
 def _formatted_arguments(raw_item: object) -> str:

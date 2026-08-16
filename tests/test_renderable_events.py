@@ -344,10 +344,8 @@ def test_a_pending_approval_ends_the_stream_as_an_interrupt() -> None:
             "name": "risky",
             "reason": {
                 "message": 'May I run `risky`?\n```\n{\n  "action": "wipe"\n}\n```',
-                "options": [
-                    {"value": "approve", "label": "Approve", "style": "primary"},
-                    {"value": "reject", "label": "Reject", "style": "danger"},
-                ],
+                "approve": {},
+                "reject": {},
             },
         }
     }
