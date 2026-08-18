@@ -686,7 +686,7 @@ wheels = [
 
 [[package]]
 name = "openai-agents"
-version = "0.21.0"
+version = "0.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffelib" },
@@ -697,9 +697,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/2e/11705d2111e0d46d7a35df234f816a93ba542f6eb9a07e6a75c6576af896/openai_agents-0.21.0.tar.gz", hash = "sha256:79c6ac2b8e7cb01f9cda6a565131577f67b849b6cc0bc7cfedfb9c3df3195d8f", size = 6264573, upload-time = "2026-08-15T02:50:10.532Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/8a/c05a23ead7c349971505c4364e5dac139c26373c60609ce44d0fe450c2da/openai_agents-0.21.1.tar.gz", hash = "sha256:7d6519bed92542b2a7160cd50edca0721c64d5f06616d85c6de477f237b8423c", size = 6352641, upload-time = "2026-08-16T22:29:35.173Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/2a/0903d04d448531a6d1f4f246ba72e184c11d8814cfc71f7082861efd6882/openai_agents-0.21.0-py3-none-any.whl", hash = "sha256:06cec842ed681ce51fbbf466891d194eb25771511067f927892b8689d75516ca", size = 1095655, upload-time = "2026-08-15T02:50:08.873Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/af/a219a1f020ffa6bed3332c7bc4023ce5d0a1a922c843361b62f368286692/openai_agents-0.21.1-py3-none-any.whl", hash = "sha256:47cdc36c70aa1c0bd4337d040b605b1ea4ac598f178b59f4040208884785f0d0", size = 1107970, upload-time = "2026-08-16T22:29:33.011Z" },
 ]
 
 [[package]]
@@ -1321,7 +1321,7 @@ dev = [
     { name = "bedrock-agentcore", specifier = "==1.21.0" },
     { name = "boto3", specifier = "==1.43.72" },
     { name = "openai", specifier = "==3.1.0" },
-    { name = "openai-agents", specifier = "==0.21.0" },
+    { name = "openai-agents", specifier = "==0.21.1" },
     { name = "packaging", specifier = "==26.3" },
     { name = "pip-licenses", specifier = "==5.5.5" },
     { name = "pytest", specifier = "==9.1.1" },
