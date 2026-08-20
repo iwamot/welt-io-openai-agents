@@ -42,7 +42,7 @@ dev = [
     # examples/agent is a standalone deployable; its dependencies are
     # installed here so lint and type checks cover it against the local
     # library.
-    "bedrock-agentcore==1.21.0",
+    "bedrock-agentcore==1.22.0",
     # Pinned even though it arrives through bedrock-agentcore: the example
     # reads the AWS region off it, and a range gives Renovate nothing to
     # bump, which would leave CI on whatever version comes along.
