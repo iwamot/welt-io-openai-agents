@@ -46,7 +46,7 @@ dev = [
     # Pinned even though it arrives through bedrock-agentcore: the example
     # reads the AWS region off it, and a range gives Renovate nothing to
     # bump, which would leave CI on whatever version comes along.
-    "boto3==1.43.76",
+    "boto3==1.43.77",
     "openai-agents==0.22.0",
     # Pinned even though it arrives through openai-agents, for the same
     # reason as boto3: the package declares a range for it, and CI should
