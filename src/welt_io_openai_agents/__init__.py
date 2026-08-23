@@ -394,7 +394,9 @@ def _formatted_arguments(raw_item: object) -> str:
         return arguments
     if not parsed:
         return ""
-    return json.dumps(parsed, indent=2)
+    # ensure_ascii=False: the arguments are what the human decides on, and
+    # a non-ASCII value turned into \uXXXX escapes is unreadable in Slack.
+    return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
 # Media subtypes double as filename extensions, except these.

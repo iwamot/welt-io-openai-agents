@@ -359,6 +359,16 @@ def test_unparseable_arguments_are_shown_as_they_came() -> None:
     assert '{"broken"' in events[0]["interrupt"]["reason"]["message"]
 
 
+def test_non_ascii_arguments_stay_readable_in_the_question() -> None:
+    # The arguments are what the human decides on, so a Japanese value
+    # must reach the thread as itself, not as \uXXXX escapes.
+    interruptions = [approval("risky", "call_9", '{"action": "観葉植物に水やり"}')]
+
+    events = rendered(_Run([], interruptions=interruptions))
+
+    assert "観葉植物に水やり" in events[0]["interrupt"]["reason"]["message"]
+
+
 def test_empty_arguments_leave_the_question_bare() -> None:
     run = _Run([], interruptions=[approval(arguments="{}")])
 
