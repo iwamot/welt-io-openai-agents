@@ -35,10 +35,13 @@ One difference from the cloud: AgentCore Runtime gives every session its own mic
 Deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli), replacing the generated agent with this one:
 
 ```sh
-agentcore create --name WeltExample --framework OpenAIAgents
+agentcore create --name WeltExample --framework OpenAIAgents --model-provider OpenAI --memory none
 cd WeltExample
 
 curl -o app/WeltExample/main.py https://raw.githubusercontent.com/iwamot/welt-io-openai-agents/main/examples/agent/main.py
+
+# the template's requires-python floor sits below welt-io-openai-agents'
+sed -i.bak 's/requires-python = ">=3.10"/requires-python = ">=3.12"/' app/WeltExample/pyproject.toml && rm app/WeltExample/pyproject.toml.bak
 uv add --project app/WeltExample welt-io-openai-agents boto3
 
 agentcore deploy
