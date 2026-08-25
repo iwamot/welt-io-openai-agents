@@ -2,10 +2,10 @@
 real SDK.
 
 The unit tests either side of the wire work on items written by hand; this
-drives `Runner` itself — over a scripted model, so no network is needed —
-to pin what the two ends have to agree on: the approval a run stops on
-becomes the question Welt renders, and the answers applied to the state
-resume the run with the decision each stands for.
+drives the real `Runner` through `start_reply` — over a scripted model, so
+no network is needed — to pin what the two ends have to agree on: the
+approval a run stops on becomes the question Welt renders, and the answers
+applied to the state resume the run with the decision each stands for.
 """
 
 import asyncio
@@ -14,8 +14,6 @@ import base64
 import pytest
 from agents import (
     Agent,
-    Runner,
-    RunState,
     function_tool,
     set_tracing_disabled,
 )
@@ -26,7 +24,12 @@ from agents.testing import (
     function_call,
 )
 
-from welt_io_openai_agents import decode_interrupt_responses, renderable_events
+from welt_io_openai_agents import (
+    InterruptedState,
+    decode_interrupt_responses,
+    renderable_events,
+    start_reply,
+)
 
 set_tracing_disabled(True)
 
@@ -65,25 +68,33 @@ def scripted() -> ScriptedModel:
     )
 
 
-def interrupted() -> tuple[Agent, list[dict], RunState]:
+def interrupted() -> tuple[Agent, list[dict], InterruptedState]:
     """Run one turn to its approval stop.
 
     Returns:
-        The agent, the wire events of the stopped turn, and its RunState.
+        The agent, the wire events of the stopped turn, and its state.
     """
     ran.clear()
     agent = Agent(name="round-trip", model=scripted(), tools=[risky])
 
-    async def turn() -> tuple[list[dict], RunState]:
-        result = Runner.run_streamed(agent, "please wipe")
-        events = [event async for event in renderable_events(result)]
+    async def turn() -> tuple[list[dict], InterruptedState]:
+        result, pending = start_reply(
+            agent,
+            {"messages": [{"role": "user", "content": [{"text": "please wipe"}]}]},
+        )
+        events = [
+            event
+            async for event in renderable_events(result, pending_approvals=pending)
+        ]
         return events, result.to_state()
 
     events, state = asyncio.run(turn())
     return agent, events, state
 
 
-def resumed(agent: Agent, state: RunState, answers: dict) -> tuple[list, list[dict]]:
+def resumed(
+    agent: Agent, state: InterruptedState, answers: dict
+) -> tuple[list, list[dict]]:
     """Answer the stop and stream the run to its end.
 
     Returns:
@@ -91,8 +102,9 @@ def resumed(agent: Agent, state: RunState, answers: dict) -> tuple[list, list[di
     """
 
     async def turn() -> tuple[list, list[dict]]:
-        pending = state.get_interruptions()
-        result = Runner.run_streamed(agent, decode_interrupt_responses(answers, state))
+        result, pending = start_reply(
+            agent, {"interrupt_responses": answers}, state=state
+        )
         events = [
             event
             async for event in renderable_events(

@@ -26,9 +26,9 @@ AWS_BEARER_TOKEN_BEDROCK="<your Bedrock API key>" \
   --with welt-io-openai-agents main.py
 ```
 
-The endpoint's region comes from your AWS configuration the way boto3 resolves it (`AWS_DEFAULT_REGION` before `AWS_REGION`, then a profile), falling back to `us-east-1`. `MODEL_ID` takes any model the account may invoke on the endpoint's `/v1/models` listing; unset, the agent uses `openai.gpt-oss-120b`. The agent talks to the endpoint through the Responses API, and the endpoint serves some models through the Chat Completions API alone — such a model answers with a 400 ("does not support the '/v1/responses' API") rather than a reply.
+The endpoint's region is the one boto3 resolves — `AWS_DEFAULT_REGION`, then the profile's own `region` (`AWS_REGION` does not override a profile) — falling back to `us-east-1` when nothing names one. `MODEL_ID` takes any model the account may invoke on the endpoint's `/openai/v1` path; unset, the agent uses `google.gemma-4-31b`. The agent talks to the endpoint through the Responses API, and the endpoint serves some models through the Chat Completions API alone — such a model answers with a 400 ("does not support the '/openai/v1/responses' API") rather than a reply.
 
-One difference from the cloud: AgentCore Runtime gives every session its own microVM, while the local server is a single process for all sessions — the agent stashes an interrupted run in one slot, so keep approval experiments to one thread at a time.
+One difference from the cloud: AgentCore Runtime gives every session its own microVM, while the local server is a single process for all sessions — the interrupted states this example keeps all share that one process, outlive the session that raised them, and accumulate while unanswered until the process exits.
 
 ## Deploy
 
@@ -47,20 +47,18 @@ uv add --project app/WeltExample welt-io-openai-agents boto3
 agentcore deploy
 ```
 
-The CLI's OpenAIAgents template assumes the OpenAI platform; this agent points the client at Bedrock instead, so what the deployed runtime needs in its environment is `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — rather than an OpenAI key, plus `MODEL_ID` for a model other than the default `openai.gpt-oss-120b`. Note the agent runtime ARN from the deploy output: Welt's `AGENT_ARN` points at it.
+The CLI's OpenAIAgents template assumes the OpenAI platform; this agent points the client at Bedrock instead, so what the deployed runtime needs in its environment is `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — rather than an OpenAI key, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b`. Note the agent runtime ARN from the deploy output: Welt's `AGENT_ARN` points at it.
 
 ## Tools
 
 - `current_time` — the minimal tool: plain text streaming, nothing else. Ask "what time is it?" to see tool use in the thread.
-- `create_sample_file` — writes a small CSV that Welt uploads to the thread. The Bedrock endpoint takes a tool's output only as a string — the file content parts the OpenAI platform accepts are rejected — so the tool queues the file and the entrypoint yields it as a `file` event itself, beside the tool's result. The result string carries the file's exact content, that being the one channel this endpoint gives the model: without it, the model describes the upload by making one up. Ask it for a sample file.
+- `create_sample_file` — returns a small CSV as a file beside its text, which reaches the model and, because the tool is named in `files_from`, the Slack thread. Ask it for a sample file.
 - `sample_draft_report` — the model drafts a report and passes it as an argument, so the approval question shows the draft itself, and an approved call publishes exactly what was shown (the SDK resumes it with the arguments it was approved with). The published draft reaches the thread as a markdown file. Ask for two reports on different topics to see several questions pend and resolve in one round trip.
 - `sample_dangerous_action` — a pretend dangerous action (no side effects, no extra AWS permissions) gated by `needs_approval=True`: the tool itself carries no approval code, and the run pauses before its body starts. Welt renders **Approve** / **Reject** buttons in the Slack thread, and the pressed one decides whether the tool runs. Ask "deploy to prod", then press a button. See [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) for the round trip.
 
-The adapter's `files_from` is not used here: it takes files from tool outputs, which is a shape this stack's endpoint refuses — see `create_sample_file` above. Against an endpoint that accepts file content in tool outputs, naming the tool in `files_from` replaces the queue-and-yield pattern.
-
 ## Optional: file input
 
-The agent can also read files uploaded to Slack — disabled by default, and it needs a model with vision / file input (the default `openai.gpt-oss-120b` is text-only). To try it, point `MODEL_ID` at a model that reads images or documents and set in Welt's `.env`:
+The agent can also read files uploaded to Slack — disabled by default, and it needs a model with vision / file input, which the default is. To try it, set in Welt's `.env`:
 
 ```sh
 FILE_INPUT_MODALITIES=image,document
