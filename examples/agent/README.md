@@ -26,7 +26,9 @@ AWS_BEARER_TOKEN_BEDROCK="<your Bedrock API key>" \
   --with welt-io-openai-agents main.py
 ```
 
-The endpoint's region is the one boto3 resolves — `AWS_DEFAULT_REGION`, then the profile's own `region` (`AWS_REGION` does not override a profile) — falling back to `us-east-1` when nothing names one. `MODEL_ID` takes any model the account may invoke on the endpoint's `/openai/v1` path; unset, the agent uses `google.gemma-4-31b`. The agent talks to the endpoint through the Responses API, and the endpoint serves some models through the Chat Completions API alone — such a model answers with a 400 ("does not support the '/openai/v1/responses' API") rather than a reply.
+`MODEL_ID` takes any model the account may invoke on the endpoint's `/openai/v1` path; unset, the agent uses `google.gemma-4-31b`. The agent talks to the endpoint through the Responses API, and the endpoint serves some models through the Chat Completions API alone — such a model answers with a 400 ("does not support the '/openai/v1/responses' API") rather than a reply.
+
+`BEDROCK_REGION` names the region the endpoint is reached in — useful locally, when the model access you want is not where your credentials point. Unset, boto3 resolves one: `AWS_DEFAULT_REGION`, then the profile's own `region` (`AWS_REGION` is not read at all), falling back to `us-east-1` when nothing names one.
 
 One difference from the cloud: AgentCore Runtime gives every session its own microVM, while the local server is a single process for all sessions — the interrupted states this example keeps all share that one process, outlive the session that raised them, and accumulate while unanswered until the process exits.
 
@@ -47,7 +49,7 @@ uv add --project app/WeltExample welt-io-openai-agents boto3
 agentcore deploy
 ```
 
-The CLI's OpenAIAgents template assumes the OpenAI platform; this agent points the client at Bedrock instead, so what the deployed runtime needs in its environment is `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — rather than an OpenAI key, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b`. Neither takes a CLI flag: both go in the runtime's `envVars` array in `agentcore/agentcore.json`, added before `agentcore deploy` runs.
+The CLI's OpenAIAgents template assumes the OpenAI platform; this agent points the client at Bedrock instead, so what the deployed runtime needs in its environment is `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — rather than an OpenAI key, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b` and `BEDROCK_REGION` for an endpoint region other than the one the runtime resolves. None takes a CLI flag: they go in the runtime's `envVars` array in `agentcore/agentcore.json`, added before `agentcore deploy` runs.
 
 ```json
 "envVars": [

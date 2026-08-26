@@ -153,11 +153,12 @@ def sample_dangerous_action(action: str) -> str:
     return f"Ran: {action}. Completed successfully (simulated by this demo tool)."
 
 
-# Bedrock's OpenAI-compatible endpoint, in the region the AWS SDK resolves
-# (us-east-1 is mantle's home region, for environments that set none). To
-# run against another OpenAI-compatible service instead, change base_url
-# and the key it is paired with.
-_REGION = boto3.Session().region_name or "us-east-1"
+# Bedrock's OpenAI-compatible endpoint. BEDROCK_REGION names the region it
+# is reached in; unset, the AWS SDK resolves one (us-east-1 is mantle's home
+# region, for environments that set none). An empty value means unset, like
+# Welt's own variables. To run against another OpenAI-compatible service
+# instead, change base_url and the key it is paired with.
+_REGION = os.environ.get("BEDROCK_REGION") or boto3.Session().region_name or "us-east-1"
 
 agent = Agent(
     name="welt-example",
