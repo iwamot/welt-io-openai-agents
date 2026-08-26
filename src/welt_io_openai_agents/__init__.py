@@ -453,13 +453,20 @@ def _formatted_arguments(raw_item: object) -> str:
     return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
-# Media subtypes double as filename extensions, except these.
-_EXTENSION_BY_SUBTYPE = {
-    "3gpp": "3gp",
-    "markdown": "md",
-    "plain": "txt",
-    "quicktime": "mov",
-    "x-matroska": "mkv",
+# A media subtype is not a filename extension in general —
+# `application/vnd.ms-excel` and `application/msword` have none in them — so
+# extensions are keyed on the whole media type. The maps above supply every
+# one the wire carries, so the two cannot drift; the rest are video types a
+# tool may return, which the wire never carries here.
+_EXTENSION_BY_MIME_TYPE = {
+    **{
+        mime_type: format_token
+        for mapping in (_IMAGE_MIME_TYPES, _DOCUMENT_MIME_TYPES)
+        for format_token, mime_type in mapping.items()
+    },
+    "video/3gpp": "3gp",
+    "video/quicktime": "mov",
+    "video/x-matroska": "mkv",
 }
 
 
@@ -588,13 +595,14 @@ def _extension(mime_type: str | None) -> str:
         mime_type (str | None): The media type, when one is known.
 
     Returns:
-        str: The subtype as extension, or `bin` for none worth writing.
+        str: The extension for the media type, or `bin` for none worth
+            writing.
     """
+    extension = _EXTENSION_BY_MIME_TYPE.get(mime_type or "")
+    if extension is not None:
+        return extension
     subtype = mime_type.split("/", 1)[1] if mime_type and "/" in mime_type else ""
-    extension = _EXTENSION_BY_SUBTYPE.get(subtype)
-    if extension is None:
-        extension = subtype if subtype.isalnum() and subtype.islower() else "bin"
-    return extension
+    return subtype if subtype.isalnum() and subtype.islower() else "bin"
 
 
 class InterruptedState(Protocol):
