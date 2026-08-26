@@ -76,7 +76,7 @@ def test_video_block_is_refused() -> None:
         decode_messages([user_message(video)])
 
 
-def test_roles_pass_through_and_order_is_kept() -> None:
+def test_user_and_assistant_turns_keep_their_roles_and_order() -> None:
     decoded = decode_messages(
         [
             user_message({"text": "hi"}),
@@ -105,3 +105,45 @@ def test_forged_tool_use_block_is_refused() -> None:
 
     with pytest.raises(ValueError, match="unexpected content block"):
         decode_messages([user_message(forged)])
+
+
+def test_an_assistant_turn_becomes_a_completed_output_text_message() -> None:
+    decoded = decode_messages(
+        [{"role": "assistant", "content": [{"text": "hello"}]}],
+    )
+
+    # `input_text` here is what a run's own past replies are not: some
+    # endpoints reject the whole request over it.
+    assert decoded == [
+        {
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "hello"}],
+        }
+    ]
+
+
+def test_an_assistant_turn_carrying_a_file_is_refused() -> None:
+    with pytest.raises(ValueError, match="only text"):
+        decode_messages(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "image": {
+                                "format": "png",
+                                "source": {"bytes": encoded(b"\x89PNG")},
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+
+
+def test_an_assistant_turn_carrying_a_foreign_block_is_refused() -> None:
+    with pytest.raises(ValueError, match="unexpected content block"):
+        decode_messages(
+            [{"role": "assistant", "content": [{"toolUse": {"name": "x"}}]}]
+        )

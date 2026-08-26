@@ -14,15 +14,25 @@ uv add welt-io-openai-agents
 
 ## Usage
 
-`welt_agent` builds the whole AgentCore Runtime entrypoint for an agent Welt drives, so a deployable is your agent plus one mount line:
+`start_reply` and `renderable_events` are the wiring between Welt's payload and an OpenAI Agents run, so a deployable is your agent plus a short entrypoint:
 
 ```python
+from collections.abc import AsyncIterator
+
 from agents import Agent
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from welt_io_openai_agents.agentcore import welt_agent
+from welt_io_openai_agents import renderable_events, start_reply
 
 app = BedrockAgentCoreApp()
-app.entrypoint(welt_agent(Agent(name="assistant")))
+agent = Agent(name="assistant")
+
+
+@app.entrypoint
+async def invoke(payload: dict) -> AsyncIterator[dict]:
+    result, pending = start_reply(agent, payload)
+    async for event in renderable_events(result, pending_approvals=pending):
+        yield event
+
 
 if __name__ == "__main__":
     app.run()
@@ -46,19 +56,17 @@ Something misbehaving inside that range is worth an [issue](https://github.com/i
 
 ## API
 
-The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain OpenAI Agents SDK values do not fit it in either direction. Two functions adapt the inbound payload, one the outbound stream. `welt_agent` wires all three into the entrypoint; reach for them directly when your entrypoint needs a shape of its own.
+The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain OpenAI Agents SDK values do not fit it in either direction. Two functions adapt the inbound payload, one the outbound stream. `start_reply` wires the inbound pair into a run; reach for them directly when your entrypoint needs a shape of its own — messages to edit before the run, an agent to run some other way.
 
-### Entrypoint
+### Reply
 
-#### `welt_agent(agent, files_from=...)`
+#### `start_reply(agent, payload, state=..., runner=...)`
 
-Builds the entrypoint `BedrockAgentCoreApp` serves. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — runs the agent through `Runner.run_streamed`, and yields the events Welt renders.
+Starts the run that replies to Welt's payload. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — decodes it, and runs the agent on the result. What comes back is the streamed run and the approvals it resumes from, both for `renderable_events` below.
 
-Every turn runs on the messages Welt sends: the Slack thread is the source of truth for conversation history, and the payload carries it whole. An interrupted run's state waits inside the entrypoint for its answers — one slot, resume-only, living and dying with the session's microVM (recycled on idle timeout, 8 hours at most); resuming after that raises, which Welt renders as its resume-failure notice. `files_from` passes through to `renderable_events` below.
+A conversation turn runs on the messages Welt sends, because the Slack thread is the source of truth for conversation history and the payload carries it whole. A resume runs on `state`, the state of the run that raised the approvals, with the answers applied to it — answers with no `state` beside them raise. `runner` names what starts the run, `Runner.run_streamed` by default.
 
-#### `send_file(name, data)`
-
-Queues one file for the Slack thread from inside a tool, riding the wire beside the reply being streamed. On Bedrock's OpenAI-compatible endpoint this is the one road a tool's file has — the endpoint takes tool output only as a string — and the model never sees what was sent either way, so a tool whose file matters to the conversation says what it holds in its result string; a model that never saw the content would describe the upload by making one up. Every turn starts with the queue empty, so a file a failed turn left behind never rides a later reply, and an empty name or empty bytes is refused where the tool is still on the stack — Slack refuses a zero-byte upload, and the whole reply fails with it.
+The pending approvals come back beside the run because `renderable_events` needs them: they name the tools whose calls streamed before the stop, and those names are what place the resumed run's outputs — the tool behind each result, and whether its files go to the thread (`files_from`). `start_reply` hands them back because it is the code holding the state at that moment. Where to keep the state between the stop and the answers — and for how long an unanswered approval stays answerable — is the agent's to decide. Nothing is held here.
 
 ### Inbound
 
@@ -94,7 +102,7 @@ The SDK resumes from the state rather than from a payload, which is why this ada
 
 An answer whose id names no pending approval of the state raises `ValueError`, since resuming the wrong run would act on questions nobody was asked.
 
-The interrupt ids are the tool calls' own ids, as emitted by `renderable_events`; the state is stashed when an interrupt event goes by — `welt_agent` does this for you, and an entrypoint of your own does the same.
+The interrupt ids are the tool calls' own ids, as emitted by `renderable_events`; the state is stashed when an interrupt event goes by, under those ids.
 
 #### What arrives is taken as correct
 
@@ -138,7 +146,7 @@ return [
 
 Uploaded names come from the part's own `filename`; parts without one are named by their media type when a data URL carries it (`file.pdf`, `image.png`). A part pointing at its file instead — a file id, an http URL — carries nothing to upload and stays off the wire.
 
-One caveat: whether a tool may return file content at all is the model endpoint's call, not this adapter's. The OpenAI platform accepts it; Bedrock's OpenAI-compatible endpoint takes a tool's output only as a string and rejects the request otherwise — so on Bedrock a tool cannot hand the model a file, and a file for the thread goes on the wire as a `file` event beside the events this function produces — `send_file` above is that road.
+One caveat: whether a tool may return file content at all is the model endpoint's call, not this adapter's. The OpenAI platform accepts it, and so does Bedrock's `bedrock-mantle` endpoint on its `/openai/v1` path — the one the multimodal models are served from — through the Responses API. The same endpoint's `/v1` path takes a tool's output only as a string and rejects anything else.
 
 The stream names the tool behind each output itself, except on a resumed run, where the approved tools' calls streamed before the interrupt: `pending_approvals` — the interruptions of the state being resumed, read before the answers are decoded — names those.
 
@@ -158,9 +166,9 @@ A run that stops on approvals ends its stream with one `interrupt` event per pen
 
 On the SDK side:
 
-- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`; `welt_agent` keeps that round trip for you. Done by hand, the host app stashes it, applies the answers with `decode_interrupt_responses`, and runs the same agent again with the state as input. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM.
+- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM.
 - **Welt resumes once every question is answered.** There is no partial resume on the wire, so the state's approvals are all applied in one call.
-- **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, so hand `renderable_events` the state's interruptions as `pending_approvals` — that is how their files keep flowing on resume (`welt_agent` does this for you).
+- **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, so hand `renderable_events` the state's interruptions as `pending_approvals` — that is how their files keep flowing on resume, and `start_reply` returns them because it is the code holding the state at that moment.
 
 ## License
 

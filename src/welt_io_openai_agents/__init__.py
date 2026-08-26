@@ -42,12 +42,14 @@ for something the renderer discards.
 
 import json
 import logging
-from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from typing import Protocol
 
 from agents import (
+    Agent,
     RawResponsesStreamEvent,
     RunItemStreamEvent,
+    Runner,
     StreamEvent,
     ToolApprovalItem,
     ToolCallItem,
@@ -61,9 +63,11 @@ except ImportError:
     __version__ = "0.0.0+unknown"
 
 __all__ = [
+    "InterruptedState",
     "decode_interrupt_responses",
     "decode_messages",
     "renderable_events",
+    "start_reply",
 ]
 
 logger = logging.getLogger(__name__)
@@ -100,8 +104,11 @@ def decode_messages(messages: list) -> list:
     Converse format token plus base64 slot. This rebuilds each message
     accordingly — text blocks become `input_text`, image blocks
     `input_image`, and document blocks `input_file`, the document's name
-    (extension included) carried as `filename`. The result feeds
-    `Runner.run_streamed` as-is.
+    (extension included) carried as `filename`. An assistant turn's text
+    becomes the `output_text` of a completed assistant message, which is
+    the shape the SDK gives the model's own past replies — an assistant
+    turn built from input content is rejected outright by some endpoints.
+    The result feeds `Runner.run_streamed` as-is.
 
     Video blocks are refused: the Responses API has no video input shape,
     so there is nothing to rebuild one into — a silent drop would leave
@@ -114,16 +121,63 @@ def decode_messages(messages: list) -> list:
         list: Role/content input items for `Runner.run_streamed`.
 
     Raises:
-        ValueError: If a block is of a kind Welt does not send, or a video
-            block arrives.
+        ValueError: If a block is of a kind Welt does not send, a video
+            block arrives, or an assistant turn carries anything but text.
     """
-    return [
-        {
-            "role": message["role"],
-            "content": [_decoded_block(block) for block in message["content"]],
+    return [_decoded_message(message) for message in messages]
+
+
+def _decoded_message(message: dict) -> dict:
+    """
+    Decode one message into the input item its role takes.
+
+    Args:
+        message (dict): A Converse-shaped message.
+
+    Returns:
+        dict: The input item.
+
+    Raises:
+        ValueError: If a block is of a kind Welt does not send, a video
+            block arrives, or an assistant turn carries anything but text.
+    """
+    if message["role"] == "assistant":
+        return {
+            "role": "assistant",
+            # History: these turns were said in full before this run began.
+            "status": "completed",
+            "content": [_assistant_block(block) for block in message["content"]],
         }
-        for message in messages
-    ]
+    return {
+        "role": "user",
+        "content": [_decoded_block(block) for block in message["content"]],
+    }
+
+
+def _assistant_block(block: dict) -> dict:
+    """
+    Decode one block of an assistant turn.
+
+    Welt builds these turns from its own earlier replies, so they carry
+    text alone; a file block here is not Welt's payload, and the SDK's
+    assistant input has nowhere to put one. It is refused rather than
+    guessed at.
+
+    Args:
+        block (dict): A Converse content block of an assistant turn.
+
+    Returns:
+        dict: The `output_text` content the SDK gives past replies.
+
+    Raises:
+        ValueError: If the block is of a kind Welt does not send, or is
+            not a text block.
+    """
+    if not _ALLOWED_BLOCKS.issuperset(block):
+        raise ValueError(f"unexpected content block: {sorted(block)}")
+    if "text" not in block:
+        raise ValueError("an assistant turn carries only text blocks")
+    return {"type": "output_text", "text": block["text"]}
 
 
 # The content block kinds Welt sends. A block of any other kind — a toolUse or
@@ -541,3 +595,104 @@ def _extension(mime_type: str | None) -> str:
     if extension is None:
         extension = subtype if subtype.isalnum() and subtype.islower() else "bin"
     return extension
+
+
+class InterruptedState(Protocol):
+    """What `start_reply` takes of an interrupted run's RunState.
+
+    Importing the SDK's RunState to hold and hand back one value would
+    bind this signature to its generics for nothing. This names the
+    methods `decode_interrupt_responses` uses instead, and a RunState
+    satisfies it.
+    """
+
+    def get_interruptions(self) -> Sequence[ToolApprovalItem]: ...
+
+    def approve(self, approval_item: ToolApprovalItem) -> None: ...
+
+    def reject(self, approval_item: ToolApprovalItem) -> None: ...
+
+
+class _StreamedLike(Protocol):
+    """What `start_reply` hands back: the streamed run.
+
+    A RunResultStreaming satisfies it: the members `renderable_events`
+    reads, plus `to_state()`, which is where an interrupted run waits for
+    its answers.
+    """
+
+    interruptions: list[ToolApprovalItem]
+
+    def stream_events(self) -> AsyncIterator[StreamEvent]: ...
+
+    def to_state(self) -> InterruptedState: ...
+
+
+def start_reply(
+    agent: Agent,
+    payload: dict,
+    *,
+    state: InterruptedState | None = None,
+    runner: Callable[..., _StreamedLike] = Runner.run_streamed,
+) -> tuple[_StreamedLike, list[ToolApprovalItem]]:
+    """
+    Start the run that replies to the payload Welt sent.
+
+    The inbound half of the wiring every deployable needs: it reads which
+    envelope Welt sent — Converse-shaped `messages` for a conversation
+    turn, `interrupt_responses` for the answers that resume an interrupted
+    run — decodes it, and runs the agent on the result. Pass what comes
+    back to `renderable_events` for the outbound half::
+
+        result, pending = start_reply(agent, payload)
+        async for event in renderable_events(
+            result, files_from={"create_sample_file"}, pending_approvals=pending
+        ):
+            yield event
+
+    A conversation turn runs on the messages Welt sends, because the Slack
+    thread is the source of truth for conversation history and the payload
+    carries it whole. A resume runs on `state` — the state of the run that
+    raised the approvals — with the answers applied to it here.
+
+    The pending approvals come back beside the run because
+    `renderable_events` needs them: they name the tools whose calls
+    streamed before the stop, and those names are what place the resumed
+    run's outputs — the tool behind each result, and whether its files go
+    to the thread (`files_from`). They come back from here because this is
+    the code holding the state at that moment. Where to keep the state
+    between the stop and the answers — and for how long an unanswered
+    approval stays answerable — is the agent's to decide. Nothing is held
+    here.
+
+    Args:
+        agent (Agent): The agent to run.
+        payload (dict): The invocation payload, carrying one of the two
+            envelopes. What Welt sends is taken as correct, so a payload
+            carrying neither is Welt's bug, and the KeyError it raises is
+            reported as an `error` event by the AgentCore Runtime SDK.
+        state (RunState | None): The state of the run being resumed, held
+            by the caller since the stop that raised it. Required when the
+            payload carries answers, and unused otherwise.
+        runner (Callable[..., RunResultStreaming]): What starts the run.
+            The SDK's own `Runner.run_streamed`, named here for a run
+            config of your own — or a run of your own, in a test.
+
+    Returns:
+        tuple[RunResultStreaming, list[ToolApprovalItem]]: The streamed
+            run, and the approvals it resumes from, as
+            `renderable_events` takes them.
+
+    Raises:
+        RuntimeError: If the payload carries answers and no `state` came
+            with them — there is no run to resume.
+    """
+    if "interrupt_responses" in payload:
+        if state is None:
+            raise RuntimeError("start_reply was given answers but no state to resume.")
+        # These name the tools whose outputs stream without their calls
+        # on the resumed run.
+        pending = list(state.get_interruptions())
+        answered = decode_interrupt_responses(payload["interrupt_responses"], state)
+        return runner(agent, answered), pending
+    return runner(agent, decode_messages(payload["messages"])), []

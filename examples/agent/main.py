@@ -3,10 +3,10 @@
 Receives Welt's payload, feeds it to an OpenAI Agents SDK run, and
 streams back the renderable subset of its stream — the AgentCore Runtime
 SDK emits each event as SSE, which Welt (https://github.com/iwamot/welt)
-renders into Slack. `welt_agent` is the whole connection: it reads which
-envelope Welt sent (a conversation turn, or the answers that resume an
-interrupted run), runs the agent, and keeps an interrupted run until its
-answers arrive.
+renders into Slack. `start_reply` reads which envelope Welt sent (a
+conversation turn, or the answers that resume an interrupted run),
+decodes it, and runs the agent on the result; `renderable_events` reduces
+what it streams.
 
 The model runs on Amazon Bedrock through the OpenAI-compatible
 `bedrock-mantle` endpoint, so the OpenAI client needs nothing beyond a
@@ -16,7 +16,9 @@ This example is a standalone deployable; Welt drives it only through the
 JSON wire contract, which welt-io-openai-agents adapts in both directions.
 """
 
+import base64
 import os
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -30,7 +32,11 @@ from agents import (
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from openai import AsyncOpenAI
 
-from welt_io_openai_agents.agentcore import send_file, welt_agent
+from welt_io_openai_agents import (
+    InterruptedState,
+    renderable_events,
+    start_reply,
+)
 
 # The SDK traces to the OpenAI platform by default and asks for an OpenAI
 # API key to do it; this agent runs on AWS credentials alone.
@@ -51,27 +57,26 @@ def current_time() -> str:
 
 
 @function_tool
-def create_sample_file() -> str:
+def create_sample_file() -> list[dict]:
     """
     Create a small sample CSV file.
 
-    Bedrock's OpenAI-compatible endpoint takes a tool's output only as a
-    string — the file content parts the OpenAI platform accepts there are
-    rejected as malformed — so a tool on this stack cannot hand its file
-    to the model. `send_file` hands the thread the file directly instead.
+    The file rides the tool's result as a content part, which reaches the
+    model — and the Slack thread, because this tool is named in
+    `files_from` below.
 
     Returns:
-        str: The outcome, the file's exact content included — the result
-            string is the one channel this endpoint gives the model, and
-            a model that never saw the content would describe the upload
-            by making one up. The file itself goes to the Slack thread.
+        list: The outcome, the file beside it.
     """
     csv = b"fruit,count\napple,3\nbanana,5\n"
-    send_file("sample.csv", csv)
-    return (
-        "Created sample.csv and sent it to the Slack thread."
-        " Its exact content is:\n" + csv.decode("ascii")
-    )
+    return [
+        {"type": "text", "text": "Created sample.csv."},
+        {
+            "type": "file",
+            "filename": "sample.csv",
+            "file_data": "data:text/csv;base64," + base64.b64encode(csv).decode(),
+        },
+    ]
 
 
 def _document_name(stem: str) -> str:
@@ -91,7 +96,7 @@ def _document_name(stem: str) -> str:
 
 
 @function_tool(needs_approval=True)
-def sample_draft_report(topic: str, draft: str) -> str:
+def sample_draft_report(topic: str, draft: str) -> list[dict]:
     """
     Publish a small report on a topic.
 
@@ -110,14 +115,22 @@ def sample_draft_report(topic: str, draft: str) -> str:
         draft (str): The full report body, ready to publish.
 
     Returns:
-        str: The outcome of the publish.
+        list: The outcome, the published draft beside it.
     """
     name = _document_name("report")
-    send_file(f"{name}.md", draft.encode())
-    return (
-        f"Published the approved draft to the Slack thread as {name}.md."
-        " The publish flow is complete; nothing is left to approve."
-    )
+    return [
+        {
+            "type": "text",
+            "text": f"Published the approved draft as {name}.md."
+            " The publish flow is complete; nothing is left to approve.",
+        },
+        {
+            "type": "file",
+            "filename": f"{name}.md",
+            "file_data": "data:text/markdown;base64,"
+            + base64.b64encode(draft.encode()).decode(),
+        },
+    ]
 
 
 @function_tool(needs_approval=True)
@@ -159,11 +172,12 @@ agent = Agent(
         " pending."
     ),
     model=OpenAIResponsesModel(
-        # Any model on the endpoint's /v1/models listing the account may
-        # invoke; an empty MODEL_ID means unset, like Welt's own variables.
-        model=os.environ.get("MODEL_ID") or "openai.gpt-oss-120b",
+        # Any model the account may invoke that serves
+        # `/openai/v1/responses` and reads files; an empty MODEL_ID means
+        # unset, like Welt's own variables.
+        model=os.environ.get("MODEL_ID") or "google.gemma-4-31b",
         openai_client=AsyncOpenAI(
-            base_url=f"https://bedrock-mantle.{_REGION}.api.aws/v1",
+            base_url=f"https://bedrock-mantle.{_REGION}.api.aws/openai/v1",
             api_key=os.environ["AWS_BEARER_TOKEN_BEDROCK"],
         ),
     ),
@@ -176,7 +190,81 @@ agent = Agent(
 )
 
 
-app.entrypoint(welt_agent(agent))
+# The tools whose files belong in the Slack thread. A tool left out keeps
+# its files to the model.
+_FILES_FROM = {"create_sample_file", "sample_draft_report"}
+
+# The states of the runs that stopped for approval, under the ids of the
+# approvals they stopped on — Welt sends those ids back when the buttons
+# are answered. An entry lives as long as this process: AgentCore Runtime
+# gives each session its own microVM, so a resume that arrives after it
+# was recycled finds nothing and raises, which Welt renders as its
+# resume-failure notice.
+_interrupted: dict[str, InterruptedState] = {}
+
+
+def _resumed(answers: Mapping[str, object]) -> InterruptedState:
+    """
+    Take the state the answered approvals belong to out of the map.
+
+    A stop's questions are answered together, so every id in one payload
+    names the same run, and any answered id finds it. The whole stop
+    leaves the map with it: the ids the stop raised all hold that one
+    state, and identity is what tells them from the ids of another stop.
+    The values the answers carry are not read here — the adapter reads
+    them when it applies them to the state.
+
+    Args:
+        answers (Mapping): Welt's `interrupt_responses`, keyed by the
+            approvals' ids.
+
+    Returns:
+        InterruptedState: The state that resumes the answers.
+
+    Raises:
+        RuntimeError: If no answered id is held — this process no longer
+            has the run, so there is nothing to resume.
+    """
+    state = next((_interrupted[i] for i in answers if i in _interrupted), None)
+    if state is None:
+        raise RuntimeError("No interrupted run to resume in this session.")
+    for approval_id in [i for i, held in _interrupted.items() if held is state]:
+        del _interrupted[approval_id]
+    return state
+
+
+@app.entrypoint
+async def invoke(payload: dict) -> AsyncIterator[dict]:
+    """
+    Stream a reply to the conversation or approval answers Welt sent.
+
+    Args:
+        payload (dict): Welt's invocation payload.
+
+    Yields:
+        dict: The events Welt renders.
+    """
+    state: InterruptedState | None = None
+    if "interrupt_responses" in payload:
+        # The envelope key says which of the two arrived; a turn carries
+        # no answers and needs no state.
+        state = _resumed(payload["interrupt_responses"])
+
+    result, pending = start_reply(agent, payload, state=state)
+    state_of_stop: InterruptedState | None = None
+    async for event in renderable_events(
+        result, files_from=_FILES_FROM, pending_approvals=pending
+    ):
+        interrupt = event.get("interrupt")
+        if interrupt is not None:
+            # The run stopped here, and its state is what answers these
+            # questions when the buttons come back. One snapshot serves
+            # the whole stop: every id points at the same object, which
+            # is what lets `_resumed` release the stop as one.
+            if state_of_stop is None:
+                state_of_stop = result.to_state()
+            _interrupted[interrupt["id"]] = state_of_stop
+        yield event
 
 
 if __name__ == "__main__":
