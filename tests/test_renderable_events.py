@@ -284,6 +284,29 @@ def test_media_subtypes_that_are_not_extensions_are_mapped() -> None:
     assert events[3]["file"]["name"] == "file.bin"
 
 
+def test_media_types_the_wire_carries_get_their_own_extension() -> None:
+    # A media subtype is not an extension in general, so these are named
+    # from the whole media type rather than the part after the slash.
+    output = [
+        {"type": "input_file", "file_data": f"data:{mime_type};base64,{encoded(b'x')}"}
+        for mime_type in (
+            "application/msword",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    ]
+
+    events = rendered(
+        _Run([tool_call(), tool_output(output)]), files_from={"make_file"}
+    )
+
+    assert [event["file"]["name"] for event in events[2:5]] == [
+        "file.doc",
+        "file.xls",
+        "file.xlsx",
+    ]
+
+
 def test_pointer_parts_stay_off_the_wire() -> None:
     # A part pointing at its file — an http URL, a file id — carries
     # nothing to upload.
