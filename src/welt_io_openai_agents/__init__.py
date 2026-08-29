@@ -82,6 +82,23 @@ _IMAGE_MIME_TYPES = {
     "webp": "image/webp",
 }
 
+_VIDEO_MIME_TYPES = {
+    "flv": "video/x-flv",
+    "mkv": "video/x-matroska",
+    "mov": "video/quicktime",
+    "mp4": "video/mp4",
+    "mpeg": "video/mpeg",
+    "mpg": "video/mpeg",
+    "three_gp": "video/3gpp",
+    "webm": "video/webm",
+    "wmv": "video/x-ms-wmv",
+}
+
+# A video format token is its own filename extension, with one exception:
+# Converse spells 3GP `three_gp`. The endpoint types an input_file by the
+# extension it is given, so the extension is what has to be right.
+_VIDEO_EXTENSIONS = {"three_gp": "3gp"}
+
 _DOCUMENT_MIME_TYPES = {
     "csv": "text/csv",
     "doc": "application/msword",
@@ -103,16 +120,18 @@ def decode_messages(messages: list) -> list:
     `input_image` / `input_file` content carrying a data URL instead of a
     Converse format token plus base64 slot. This rebuilds each message
     accordingly — text blocks become `input_text`, image blocks
-    `input_image`, and document blocks `input_file`, the document's name
-    (extension included) carried as `filename`. An assistant turn's text
-    becomes the `output_text` of a completed assistant message, which is
-    the shape the SDK gives the model's own past replies — an assistant
-    turn built from input content is rejected outright by some endpoints.
-    The result feeds `Runner.run_streamed` as-is.
+    `input_image`, and document and video blocks both `input_file`, named
+    so that the filename carries the format's extension. An assistant
+    turn's text becomes the `output_text` of a completed assistant
+    message, which is the shape the SDK gives the model's own past
+    replies — an assistant turn built from input content is rejected
+    outright by some endpoints. The result feeds `Runner.run_streamed`
+    as-is.
 
-    Video blocks are refused: the Responses API has no video input shape,
-    so there is nothing to rebuild one into — a silent drop would leave
-    the model answering a conversation with a piece missing.
+    The Responses API has no video content type, so a video rides in the
+    file slot, where an endpoint that reads video types it by the
+    filename's extension. Whether the model can read one is the model's
+    and the endpoint's answer, not this adapter's.
 
     Args:
         messages (list): The `messages` value of Welt's payload.
@@ -121,8 +140,8 @@ def decode_messages(messages: list) -> list:
         list: Role/content input items for `Runner.run_streamed`.
 
     Raises:
-        ValueError: If a block is of a kind Welt does not send, a video
-            block arrives, or an assistant turn carries anything but text.
+        ValueError: If a block is of a kind Welt does not send, or an
+            assistant turn carries anything but text.
     """
     return [_decoded_message(message) for message in messages]
 
@@ -138,8 +157,8 @@ def _decoded_message(message: dict) -> dict:
         dict: The input item.
 
     Raises:
-        ValueError: If a block is of a kind Welt does not send, a video
-            block arrives, or an assistant turn carries anything but text.
+        ValueError: If a block is of a kind Welt does not send, or an
+            assistant turn carries anything but text.
     """
     if message["role"] == "assistant":
         return {
@@ -198,8 +217,7 @@ def _decoded_block(block: dict) -> dict:
         dict: The Responses API input content.
 
     Raises:
-        ValueError: If the block is of a kind Welt does not send, or is a
-            video block — the Responses API has no video input shape.
+        ValueError: If the block is of a kind Welt does not send.
     """
     if not _ALLOWED_BLOCKS.issuperset(block):
         raise ValueError(f"unexpected content block: {sorted(block)}")
@@ -222,7 +240,17 @@ def _decoded_block(block: dict) -> dict:
             "filename": f"{media['name']}.{media['format']}",
             "file_data": f"data:{mime_type};base64,{media['source']['bytes']}",
         }
-    raise ValueError("the Responses API has no video input")
+    media = block["video"]
+    video_format = media["format"]
+    mime_type = _VIDEO_MIME_TYPES[video_format]
+    extension = _VIDEO_EXTENSIONS.get(video_format, video_format)
+    # A video block carries no name of its own, and Welt embeds at most one
+    # video per payload, so a fixed name cannot collide with another.
+    return {
+        "type": "input_file",
+        "filename": f"video.{extension}",
+        "file_data": f"data:{mime_type};base64,{media['source']['bytes']}",
+    }
 
 
 class _InterruptedState(Protocol):

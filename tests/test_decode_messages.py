@@ -69,11 +69,29 @@ def test_base64_travels_on_undecoded() -> None:
     assert decoded[0]["content"][0]["image_url"].endswith(payload)
 
 
-def test_video_block_is_refused() -> None:
-    video = {"video": {"format": "mp4", "source": {"bytes": encoded(b"vid")}}}
+def test_video_block_becomes_an_input_file_named_by_its_format() -> None:
+    payload = encoded(b"vid")
+    video = {"video": {"format": "mp4", "source": {"bytes": payload}}}
 
-    with pytest.raises(ValueError, match="no video input"):
-        decode_messages([user_message(video)])
+    decoded = decode_messages([user_message(video)])
+
+    assert decoded[0]["content"] == [
+        {
+            "type": "input_file",
+            "filename": "video.mp4",
+            "file_data": f"data:video/mp4;base64,{payload}",
+        }
+    ]
+
+
+def test_video_filename_uses_the_extension_not_the_format_token() -> None:
+    video = {"video": {"format": "three_gp", "source": {"bytes": encoded(b"vid")}}}
+
+    decoded = decode_messages([user_message(video)])
+
+    part = decoded[0]["content"][0]
+    assert part["filename"] == "video.3gp"
+    assert part["file_data"].startswith("data:video/3gpp;base64,")
 
 
 def test_user_and_assistant_turns_keep_their_roles_and_order() -> None:
