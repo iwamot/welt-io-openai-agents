@@ -481,20 +481,15 @@ def _formatted_arguments(raw_item: object) -> str:
     return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
-# A media subtype is not a filename extension in general —
-# `application/vnd.ms-excel` and `application/msword` have none in them — so
-# extensions are keyed on the whole media type. The maps above supply every
-# one the wire carries, so the two cannot drift; the rest are video types a
-# tool may return, which the wire never carries here.
+# The extension for every media type the wire's formats map to, built from
+# the maps above so the two cannot drift. A media subtype is not a filename
+# extension in general — `application/vnd.ms-excel` and `video/x-ms-wmv`
+# have none in them — which is why this is keyed on the whole media type.
+# Where two formats share one (mpeg and mpg), the last one named wins.
 _EXTENSION_BY_MIME_TYPE = {
-    **{
-        mime_type: format_token
-        for mapping in (_IMAGE_MIME_TYPES, _DOCUMENT_MIME_TYPES)
-        for format_token, mime_type in mapping.items()
-    },
-    "video/3gpp": "3gp",
-    "video/quicktime": "mov",
-    "video/x-matroska": "mkv",
+    mime_type: _VIDEO_EXTENSIONS.get(format_token, format_token)
+    for mapping in (_IMAGE_MIME_TYPES, _DOCUMENT_MIME_TYPES, _VIDEO_MIME_TYPES)
+    for format_token, mime_type in mapping.items()
 }
 
 

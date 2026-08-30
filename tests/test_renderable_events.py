@@ -307,6 +307,26 @@ def test_media_types_the_wire_carries_get_their_own_extension() -> None:
     ]
 
 
+def test_video_media_types_get_their_own_extension() -> None:
+    # The video formats the wire carries are named from the whole media
+    # type too: two of them spell their subtype in a way no extension can
+    # be taken from, and 3GP is spelled `three_gp` on the wire.
+    output = [
+        {"type": "input_file", "file_data": f"data:{mime_type};base64,{encoded(b'v')}"}
+        for mime_type in ("video/x-flv", "video/x-ms-wmv", "video/3gpp")
+    ]
+
+    events = rendered(
+        _Run([tool_call(), tool_output(output)]), files_from={"make_file"}
+    )
+
+    assert [event["file"]["name"] for event in events[2:5]] == [
+        "file.flv",
+        "file.wmv",
+        "file.3gp",
+    ]
+
+
 def test_pointer_parts_stay_off_the_wire() -> None:
     # A part pointing at its file — an http URL, a file id — carries
     # nothing to upload.
