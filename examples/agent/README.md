@@ -76,4 +76,4 @@ The agent can also read files uploaded to Slack — disabled by default, and it 
 FILE_INPUT_MODALITIES=image,document
 ```
 
-`video` is not supported: the Responses API has no video input, so the adapter refuses video blocks outright — see [Welt's Files doc](https://github.com/iwamot/welt/blob/main/docs/files.md) for the Welt side.
+`video` can go in that list too: a video rides in the file slot, which an endpoint that reads video types by the filename's extension. Whether one is read at all is the endpoint's and the model's answer, and a refusal arrives as the error it is — see [Welt's Files doc](https://github.com/iwamot/welt/blob/main/docs/files.md) for the Welt side.
