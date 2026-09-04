@@ -21,8 +21,8 @@ uv run --no-sync pytest
 # its range, so the `>=` in pyproject.toml stays a tested claim. The floors are
 # read from the manifest rather than repeated here, and read with a requirement
 # parser rather than by hand, so extras and markers cannot turn into a package
-# name that does not exist. `langchain-core` — which carries no floor of its
-# own — stays at the version LangGraph pulls in.
+# name that does not exist. `openai` — which carries no floor of its own —
+# stays at the version the Agents SDK pulls in.
 mapfile -t floors < <(
   uv run --no-sync python - <<'PY'
 import tomllib
@@ -39,8 +39,9 @@ with open("pyproject.toml", "rb") as f:
 PY
 )
 # --no-deps swaps the named packages alone. The dev group pins a current
-# LangGraph for the example agent, so a resolver would honor that pin and leave
-# the floor untested. The example is out of scope here for the same reason.
+# Agents SDK for the example agent, so a resolver would honor that pin and
+# leave the floor untested. The example is out of scope here for the same
+# reason.
 uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "${floors[@]}"
 
 # What is actually installed, not what was asked for: a range read wrong, or a
