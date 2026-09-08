@@ -160,6 +160,10 @@ def sample_dangerous_action(action: str) -> str:
 # instead, change base_url and the key it is paired with.
 _REGION = os.environ.get("BEDROCK_REGION") or boto3.Session().region_name or "us-east-1"
 
+_API_KEY = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
+if not _API_KEY:
+    raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK is not set.")
+
 agent = Agent(
     name="welt-example",
     # A rejected approval reaches the model as the tool's result ("Tool
@@ -179,7 +183,7 @@ agent = Agent(
         model=os.environ.get("MODEL_ID") or "google.gemma-4-31b",
         openai_client=AsyncOpenAI(
             base_url=f"https://bedrock-mantle.{_REGION}.api.aws/openai/v1",
-            api_key=os.environ["AWS_BEARER_TOKEN_BEDROCK"],
+            api_key=_API_KEY,
         ),
     ),
     tools=[
