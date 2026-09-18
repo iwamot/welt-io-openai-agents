@@ -68,6 +68,7 @@ class FakeRun:
 
     events: list
     interruptions: list[ToolApprovalItem] = field(default_factory=list)
+    new_items: list = field(default_factory=list)
     state: FakeState = field(default_factory=FakeState)
 
     async def stream_events(self) -> AsyncIterator[StreamEvent]:
@@ -102,14 +103,11 @@ def replies(
     files_from: set[str] | None = None,
 ) -> list[dict]:
     """Stream one reply and gather the events it renders."""
-    result, pending = start_reply(agent, payload, state=state, runner=runner)
+    result = start_reply(agent, payload, state=state, runner=runner)
 
     async def gather() -> list[dict]:
         return [
-            event
-            async for event in renderable_events(
-                result, files_from=files_from, pending_approvals=pending
-            )
+            event async for event in renderable_events(result, files_from=files_from)
         ]
 
     return asyncio.run(gather())
@@ -165,22 +163,6 @@ def test_answers_without_a_state_to_resume_are_refused() -> None:
 
     with pytest.raises(RuntimeError, match="no state to resume"):
         replies(runner, {"interrupt_responses": {"call_1": {"value": True}}})
-
-
-def test_a_resume_returns_the_approvals_it_resumes_from() -> None:
-    item = approval("call_1")
-    state = FakeState(pending=[item])
-    runner = ReplayRunner(FakeRun([]))
-
-    _, pending = start_reply(
-        agent,
-        {"interrupt_responses": {"call_1": {"value": True}}},
-        state=state,
-        runner=runner,
-    )
-
-    # These are what renderable_events takes as pending_approvals.
-    assert pending == [item]
 
 
 def test_a_run_that_stops_for_approval_ends_with_its_interrupts() -> None:

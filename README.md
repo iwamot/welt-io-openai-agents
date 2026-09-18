@@ -29,8 +29,8 @@ agent = Agent(name="assistant")
 
 @app.entrypoint
 async def invoke(payload: dict) -> AsyncIterator[dict]:
-    result, pending = start_reply(agent, payload)
-    async for event in renderable_events(result, pending_approvals=pending):
+    result = start_reply(agent, payload)
+    async for event in renderable_events(result):
         yield event
 
 
@@ -62,11 +62,11 @@ The wire between Welt and the agent is JSON, specified by [Welt's wire contract]
 
 #### `start_reply(agent, payload, state=..., runner=...)`
 
-Starts the run that replies to Welt's payload. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — decodes it, and runs the agent on the result. What comes back is the streamed run and the approvals it resumes from, both for `renderable_events` below.
+Starts the run that replies to Welt's payload. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — decodes it, and runs the agent on the result. What comes back is the streamed run, for `renderable_events` below.
 
 A conversation turn runs on the messages Welt sends, because the Slack thread is the source of truth for conversation history and the payload carries it whole (an agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side). A resume runs on `state`, the state of the run that raised the approvals, with the answers applied to it — answers with no `state` beside them raise. `runner` names what starts the run, `Runner.run_streamed` by default.
 
-The pending approvals come back beside the run because `renderable_events` needs them: they name the tools whose calls streamed before the stop, and those names are what place the resumed run's outputs — the tool behind each result, and whether its files go to the thread (`files_from`). `start_reply` hands them back because it is the code holding the state at that moment. Where to keep the state between the stop and the answers — and for how long an unanswered approval stays answerable — is the agent's to decide. Nothing is held here.
+Where to keep the state between the stop and the answers — and for how long an unanswered approval stays answerable — is the agent's to decide. Nothing is held here.
 
 ### Inbound
 
@@ -90,7 +90,6 @@ The Responses API has no video content type, so a video rides in the file slot. 
 Applies Welt's resume payload — a mapping of interrupt id to the answer a human chose and the widget it came from — to the `RunState` the interrupted run left behind, and returns that state, which feeds `Runner.run_streamed` directly, answering every pending question at once:
 
 ```python
-pending = state.get_interruptions()  # read before decoding, for renderable_events
 decode_interrupt_responses(payload["interrupt_responses"], state)
 result = Runner.run_streamed(agent, state)
 ```
@@ -114,7 +113,7 @@ The one thing `decode_messages` refuses outright is a content block of a kind We
 
 ### Outbound
 
-#### `renderable_events(result, files_from=..., pending_approvals=...)`
+#### `renderable_events(result, files_from=...)`
 
 Reduces a `Runner.run_streamed` result — whose stream events wrap values Welt does not render — to the events Welt renders:
 
@@ -150,7 +149,7 @@ Uploaded names come from the part's own `filename`; parts without one are named 
 
 One caveat: whether a tool may return file content at all is the model endpoint's call, not this adapter's. The OpenAI platform accepts it, and so does Bedrock's `bedrock-mantle` endpoint on its `/openai/v1` path — the one the multimodal models are served from — through the Responses API. The same endpoint's `/v1` path takes a tool's output only as a string and rejects anything else.
 
-The stream names the tool behind each output itself, except on a resumed run, where the approved tools' calls streamed before the interrupt: `pending_approvals` — the interruptions of the state being resumed, read before the answers are decoded — names those.
+The stream names the tool behind each output itself, except on a resumed run, where the approved tools' calls streamed before the interrupt. The run carries those calls in `new_items` from the moment it starts, which is where their names come from, so a resumed run needs nothing extra passed in.
 
 Each event carries only what Welt reads, and an event with nothing to render — a delta the model left empty, a file with no bytes — is not sent at all.
 
@@ -170,7 +169,7 @@ On the SDK side:
 
 - **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM.
 - **Welt resumes once every question is answered.** There is no partial resume on the wire, so the state's approvals are all applied in one call.
-- **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, so hand `renderable_events` the state's interruptions as `pending_approvals` — that is how their files keep flowing on resume, and `start_reply` returns them because it is the code holding the state at that moment.
+- **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, and the resumed run carries them in `new_items`, which is what keeps their files flowing to the thread.
 
 ## License
 

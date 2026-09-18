@@ -10,6 +10,7 @@ from agents import (
     AgentUpdatedStreamEvent,
     MessageOutputItem,
     RawResponsesStreamEvent,
+    RunItem,
     RunItemStreamEvent,
     StreamEvent,
     ToolApprovalItem,
@@ -33,29 +34,20 @@ agent = Agent(name="test-agent")
 
 @dataclass
 class _Run:
-    """The two members `renderable_events` reads off a streamed run."""
+    """The three members `renderable_events` reads off a streamed run."""
 
     events: list
     interruptions: list[ToolApprovalItem] = field(default_factory=list)
+    new_items: list[RunItem] = field(default_factory=list)
 
     async def stream_events(self) -> AsyncIterator[StreamEvent]:
         for event in self.events:
             yield event
 
 
-def rendered(
-    run: _Run,
-    *,
-    files_from: set[str] | None = None,
-    pending_approvals: list[ToolApprovalItem] | None = None,
-) -> list[dict]:
+def rendered(run: _Run, *, files_from: set[str] | None = None) -> list[dict]:
     async def gather() -> list[dict]:
-        return [
-            event
-            async for event in renderable_events(
-                run, files_from=files_from, pending_approvals=pending_approvals
-            )
-        ]
+        return [event async for event in renderable_events(run, files_from=files_from)]
 
     return asyncio.run(gather())
 
@@ -203,7 +195,7 @@ def test_files_of_a_tool_left_out_of_files_from_stay_off_the_wire() -> None:
 
 
 def test_files_of_an_unnamed_output_stay_off_the_wire() -> None:
-    # No tool_called in this stream and no pending approvals: nothing
+    # No tool_called in this stream and no call carried into it: nothing
     # names the tool, so its files cannot be claimed by files_from.
     output = [{"type": "input_file", "file_data": encoded(b"x"), "filename": "x.csv"}]
 
@@ -212,16 +204,15 @@ def test_files_of_an_unnamed_output_stay_off_the_wire() -> None:
     assert [list(event) for event in events] == [["tool_result"]]
 
 
-def test_pending_approvals_name_the_tools_of_a_resumed_run() -> None:
+def test_the_calls_a_resumed_run_carries_name_its_tools() -> None:
     # A resumed run streams the approved tool's output without its call —
-    # that streamed before the interrupt — so the pending approvals of the
-    # state being resumed carry the name.
+    # that streamed before the interrupt — but the run carries the call in
+    # `new_items` from the moment it starts.
     output = [{"type": "input_file", "file_data": encoded(b"x"), "filename": "x.csv"}]
 
     events = rendered(
-        _Run([tool_output(output)]),
+        _Run([tool_output(output)], new_items=[tool_call("risky", "call_1").item]),
         files_from={"risky"},
-        pending_approvals=[approval("risky", "call_1")],
     )
 
     assert events[1] == {"file": {"name": "x.csv", "bytes": encoded(b"x")}}
@@ -475,14 +466,13 @@ def test_a_dict_approval_without_arguments_asks_bare() -> None:
     assert events[0]["interrupt"]["reason"]["message"] == "May I run `hosted`?"
 
 
-def test_a_pending_approval_without_a_call_id_names_nothing() -> None:
+def test_a_carried_call_without_a_call_id_names_nothing() -> None:
     output = [{"type": "input_file", "file_data": encoded(b"x"), "filename": "x.csv"}]
-    nameless = ToolApprovalItem(agent=agent, raw_item={"name": "risky"})
+    nameless = ToolCallItem(agent=agent, raw_item={"name": "risky"})
 
     events = rendered(
-        _Run([tool_output(output)]),
+        _Run([tool_output(output)], new_items=[nameless]),
         files_from={"risky"},
-        pending_approvals=[nameless],
     )
 
     assert [list(event) for event in events] == [["tool_result"]]

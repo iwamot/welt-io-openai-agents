@@ -255,11 +255,9 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
         # no answers and needs no state.
         state = _resumed(payload["interrupt_responses"])
 
-    result, pending = start_reply(agent, payload, state=state)
+    result = start_reply(agent, payload, state=state)
     state_of_stop: InterruptedState | None = None
-    async for event in renderable_events(
-        result, files_from=_FILES_FROM, pending_approvals=pending
-    ):
+    async for event in renderable_events(result, files_from=_FILES_FROM):
         interrupt = event.get("interrupt")
         if interrupt is not None:
             # The run stopped here, and its state is what answers these
