@@ -48,6 +48,7 @@ from typing import Protocol
 from agents import (
     Agent,
     RawResponsesStreamEvent,
+    RunItem,
     RunItemStreamEvent,
     Runner,
     StreamEvent,
@@ -315,12 +316,13 @@ def decode_interrupt_responses[StateT: _InterruptedState](
 class _StreamedRun(Protocol):
     """What `renderable_events` reads from the streamed run.
 
-    Importing the SDK's RunResultStreaming to read one attribute and one
-    method off it would say what two lines of code already say. This names
-    them instead, and a RunResultStreaming satisfies it.
+    Importing the SDK's RunResultStreaming to read two attributes and one
+    method off it would say what three lines of code already say. This
+    names them instead, and a RunResultStreaming satisfies it.
     """
 
     interruptions: list[ToolApprovalItem]
+    new_items: list[RunItem]
 
     def stream_events(self) -> AsyncIterator[StreamEvent]: ...
 
@@ -329,7 +331,6 @@ async def renderable_events(
     run: _StreamedRun,
     *,
     files_from: Collection[str] | None = None,
-    pending_approvals: Sequence[ToolApprovalItem] | None = None,
 ) -> AsyncIterator[dict]:
     """
     Reduce a streamed run to the events Welt renders.
@@ -350,8 +351,9 @@ async def renderable_events(
     `files_from` — a tool that hands the model a file to read stays off
     the wire unless it is listed. The stream names the tool behind each
     output itself, except for the approved tools of a resumed run, whose
-    calls streamed before the interrupt: `pending_approvals` — the
-    interruptions of the state being resumed — names those.
+    calls streamed before the interrupt; the run carries those calls in
+    `new_items` from the moment it starts, which is where their names come
+    from.
 
     Each event carries only what Welt reads, and an event with nothing to
     render — a delta the model left empty, a file with no bytes — is not
@@ -363,18 +365,14 @@ async def renderable_events(
         files_from (Collection[str] | None): The names of the tools whose
             files become `file` events. None takes files from none of
             them.
-        pending_approvals (Sequence[ToolApprovalItem] | None): On resume,
-            the interruptions of the state being resumed
-            (`state.get_interruptions()`, read before decoding the
-            answers). None for a fresh conversation turn.
 
     Yields:
         dict: The renderable wire events, in stream order.
     """
     names_by_call: dict[str, str] = {}
-    for approval in pending_approvals or ():
-        if approval.call_id and approval.tool_name:
-            names_by_call[approval.call_id] = approval.tool_name
+    for item in run.new_items:
+        if isinstance(item, ToolCallItem) and item.call_id and item.tool_name:
+            names_by_call[item.call_id] = item.tool_name
     async for event in run.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
             if (
@@ -653,6 +651,7 @@ class _StreamedLike(Protocol):
     """
 
     interruptions: list[ToolApprovalItem]
+    new_items: list[RunItem]
 
     def stream_events(self) -> AsyncIterator[StreamEvent]: ...
 
@@ -665,7 +664,7 @@ def start_reply(
     *,
     state: InterruptedState | None = None,
     runner: Callable[..., _StreamedLike] = Runner.run_streamed,
-) -> tuple[_StreamedLike, list[ToolApprovalItem]]:
+) -> _StreamedLike:
     """
     Start the run that replies to the payload Welt sent.
 
@@ -675,9 +674,9 @@ def start_reply(
     run — decodes it, and runs the agent on the result. Pass what comes
     back to `renderable_events` for the outbound half::
 
-        result, pending = start_reply(agent, payload)
+        result = start_reply(agent, payload)
         async for event in renderable_events(
-            result, files_from={"create_sample_file"}, pending_approvals=pending
+            result, files_from={"create_sample_file"}
         ):
             yield event
 
@@ -686,15 +685,9 @@ def start_reply(
     carries it whole. A resume runs on `state` — the state of the run that
     raised the approvals — with the answers applied to it here.
 
-    The pending approvals come back beside the run because
-    `renderable_events` needs them: they name the tools whose calls
-    streamed before the stop, and those names are what place the resumed
-    run's outputs — the tool behind each result, and whether its files go
-    to the thread (`files_from`). They come back from here because this is
-    the code holding the state at that moment. Where to keep the state
-    between the stop and the answers — and for how long an unanswered
-    approval stays answerable — is the agent's to decide. Nothing is held
-    here.
+    Where to keep the state between the stop and the answers — and for how
+    long an unanswered approval stays answerable — is the agent's to
+    decide. Nothing is held here.
 
     Args:
         agent (Agent): The agent to run.
@@ -710,9 +703,8 @@ def start_reply(
             config of your own — or a run of your own, in a test.
 
     Returns:
-        tuple[RunResultStreaming, list[ToolApprovalItem]]: The streamed
-            run, and the approvals it resumes from, as
-            `renderable_events` takes them.
+        RunResultStreaming: The streamed run, as `renderable_events` takes
+            it.
 
     Raises:
         RuntimeError: If the payload carries answers and no `state` came
@@ -721,9 +713,6 @@ def start_reply(
     if "interrupt_responses" in payload:
         if state is None:
             raise RuntimeError("start_reply was given answers but no state to resume.")
-        # These name the tools whose outputs stream without their calls
-        # on the resumed run.
-        pending = list(state.get_interruptions())
         answered = decode_interrupt_responses(payload["interrupt_responses"], state)
-        return runner(agent, answered), pending
-    return runner(agent, decode_messages(payload["messages"])), []
+        return runner(agent, answered)
+    return runner(agent, decode_messages(payload["messages"]))

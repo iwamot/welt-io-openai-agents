@@ -78,14 +78,11 @@ def interrupted() -> tuple[Agent, list[dict], InterruptedState]:
     agent = Agent(name="round-trip", model=scripted(), tools=[risky])
 
     async def turn() -> tuple[list[dict], InterruptedState]:
-        result, pending = start_reply(
+        result = start_reply(
             agent,
             {"messages": [{"role": "user", "content": [{"text": "please wipe"}]}]},
         )
-        events = [
-            event
-            async for event in renderable_events(result, pending_approvals=pending)
-        ]
+        events = [event async for event in renderable_events(result)]
         return events, result.to_state()
 
     events, state = asyncio.run(turn())
@@ -102,14 +99,9 @@ def resumed(
     """
 
     async def turn() -> tuple[list, list[dict]]:
-        result, pending = start_reply(
-            agent, {"interrupt_responses": answers}, state=state
-        )
+        result = start_reply(agent, {"interrupt_responses": answers}, state=state)
         events = [
-            event
-            async for event in renderable_events(
-                result, files_from={"risky"}, pending_approvals=pending
-            )
+            event async for event in renderable_events(result, files_from={"risky"})
         ]
         model = agent.model
         assert isinstance(model, ScriptedModel)
