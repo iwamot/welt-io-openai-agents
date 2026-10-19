@@ -658,7 +658,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "3.32.0"
+version = "3.35.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -668,9 +668,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/01/f7/17bcb5033c79721d11b8815a7822575e6dedb5af65149575b56c21eb43ae/openai-3.32.0.tar.gz", hash = "sha256:6feb4a50aa653df6d2cd5e9118d5f079a51cb653d652746d344164a3e8419c89", size = 2227852, upload-time = "2026-10-16T20:18:14.688Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/0f/bcd78cc1c2bfef5f1912c39b09ddf6e3209d771f598438d7629c35b3dcf3/openai-3.35.0.tar.gz", hash = "sha256:ca2250e8e213d4a4c5e48059bf159448519433d655a575f6dc0059aa0cf3e513", size = 2249701, upload-time = "2026-10-17T23:14:41.898Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/2d/3acb5ea3c158ecb205d73d951d8b3df263bc7c927c25a687e06918fd8c07/openai-3.32.0-py3-none-any.whl", hash = "sha256:dac6033390174ee85a3115e312a3a4fabc71824711ded5b3a79d5b670dd6b562", size = 2256256, upload-time = "2026-10-16T20:18:12.544Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/0e/6f75508ca88d775a78c11ba985a08906cb001e12800f821107484447274e/openai-3.35.0-py3-none-any.whl", hash = "sha256:c93c5dfd1f677241b8bac333b1d9dcad86527cd016d797320d0a74b7ddaf7eaa", size = 2280213, upload-time = "2026-10-17T23:14:39.686Z" },
 ]
 
 [[package]]
@@ -1302,7 +1302,7 @@ requires-dist = [
 dev = [
     { name = "bedrock-agentcore", specifier = "==1.24.1" },
     { name = "boto3", specifier = "==1.43.114" },
-    { name = "openai", specifier = "==3.32.0" },
+    { name = "openai", specifier = "==3.35.0" },
     { name = "openai-agents", specifier = "==0.24.0" },
     { name = "packaging", specifier = "==26.3" },
     { name = "pip-licenses", specifier = "==5.5.5" },
