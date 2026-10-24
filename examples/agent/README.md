@@ -34,32 +34,33 @@ One difference from the cloud: AgentCore Runtime gives every session its own mic
 
 ## Deploy
 
-Deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli), replacing the generated agent with this one:
+Deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli):
 
 ```sh
-agentcore create --name WeltExample --framework OpenAIAgents --model-provider OpenAI --memory none
+agentcore create --name WeltExample
 cd WeltExample
+agentcore add runtime --name WeltExample --language python \
+  --environment-variables '{"AWS_BEARER_TOKEN_BEDROCK": "<your Bedrock API key>"}'
 
 curl -o app/WeltExample/main.py https://raw.githubusercontent.com/iwamot/welt-io-openai-agents/main/examples/agent/main.py
 
-# the template's requires-python floor sits below welt-io-openai-agents'
-sed -i.bak 's/requires-python = ">=3.10"/requires-python = ">=3.12"/' app/WeltExample/pyproject.toml && rm app/WeltExample/pyproject.toml.bak
-uv add --project app/WeltExample welt-io-openai-agents boto3
+# welt-io-openai-agents' floor; left out, uv takes the local Python's, which may be newer than AgentCore runs
+uv init --bare --python 3.12 app/WeltExample
+uv add --project app/WeltExample bedrock-agentcore aws-opentelemetry-distro boto3 welt-io-openai-agents
 
 agentcore deploy
 ```
 
-The CLI's OpenAIAgents template assumes the OpenAI platform; this agent points the client at Bedrock instead, so what the deployed runtime needs in its environment is `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — rather than an OpenAI key, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b` and `BEDROCK_REGION` for an endpoint region other than the one the runtime resolves. None takes a CLI flag: they go in the runtime's `envVars` array in `agentcore/agentcore.json`, added before `agentcore deploy` runs.
-
-```json
-"envVars": [
-  { "name": "AWS_BEARER_TOKEN_BEDROCK", "value": "<your Bedrock API key>" }
-]
-```
+The agent reaches the model through Bedrock's OpenAI-compatible endpoint, so the deployed runtime needs `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — in its environment, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b` and `BEDROCK_REGION` for an endpoint region other than the one the runtime resolves. All three go in the `--environment-variables` object.
 
 `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
 
-The CLI has no teardown command — removing the deployment means deleting the CloudFormation stack it created, `AgentCore-WeltExample-default`.
+To remove the deployment, take the runtime out of the project and deploy the empty project, which deletes the CloudFormation stack, `AgentCore-WeltExample-default`:
+
+```sh
+agentcore remove runtime --name WeltExample
+agentcore deploy --yes
+```
 
 ## Tools
 
