@@ -9,7 +9,7 @@ The [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) (Python)
 ## Install
 
 ```bash
-uv add welt-io-openai-agents
+uv add welt-io-openai-agents bedrock-agentcore
 ```
 
 ## Usage
@@ -37,6 +37,8 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
 if __name__ == "__main__":
     app.run()
 ```
+
+To see it in Slack, run the file (`uv run main.py`). It serves on port 8080, where Welt's local mode reaches it, so follow [Welt's Quick Start](https://github.com/iwamot/welt#quick-start) with this file in place of the example agent. To deploy, follow the example's [Deploy](examples/agent#deploy) section with this file in place of the downloaded `main.py`, then point Welt's `AGENT_ARN` at the runtime.
 
 See [`examples/agent`](examples/agent) for the full version — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools), with the model on Amazon Bedrock's OpenAI-compatible endpoint instead of the OpenAI platform. The sections below cover the entrypoint and the adapters it wires in.
 
@@ -124,6 +126,10 @@ Reduces a `Runner.run_streamed` result — whose stream events wrap values Welt 
 | File and image content a tool named in `files_from` returned | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
 | Pending tool approvals | `interrupt` | An approval question (see below) |
 
+**Files reach the thread only from tools named in `files_from`.** Images and files from the model's own output, or from a hosted tool such as `ImageGenerationTool` or `CodeInterpreterTool`, are not read, and a hosted tool shows no indicator.
+
+**A failed tool's indicator still ends as complete.** The SDK folds a tool's failure into text for the model, so the adapter always reports `success`. To end the reply on a failure instead, build the tool with `failure_error_function=None`: the exception ends the run, and Welt shows its reply failure notice.
+
 Reasoning deltas stay off the wire: models like gpt-oss think aloud before they answer, and the wire has no place for reasoning — only the answer streams.
 
 A tool hands files to the model for either of two reasons — to have it read them, or to give them to the human — and only the agent knows which is which, so name the tools whose files belong in the thread:
@@ -167,8 +173,9 @@ A run that stops on approvals ends its stream with one `interrupt` event per pen
 
 On the SDK side:
 
-- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM.
+- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM, for as long as that microVM lives: a question left open past that can no longer be resumed ([Expiry](https://github.com/iwamot/welt/blob/main/docs/interrupts.md#behavior-details)).
 - **Welt resumes once every question is answered.** There is no partial resume on the wire, so the state's approvals are all applied in one call.
+- **Tell the model what a rejection means.** A rejected call reaches the model as the tool's result, `Tool execution was not approved.`, and a model can read past that and report the action as done. The [example agent](examples/agent)'s `instructions` carry a rule against it.
 - **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, and the resumed run carries them in `new_items`, which is what keeps their files flowing to the thread.
 
 ## License
