@@ -2,7 +2,9 @@ import asyncio
 import base64
 import logging
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from dataclasses import dataclass, field
+from itertools import product
 
 import pytest
 from agents import (
@@ -104,12 +106,81 @@ def approval(
     return ToolApprovalItem(agent=agent, raw_item=raw)
 
 
-def test_text_delta_becomes_a_data_event() -> None:
-    assert rendered(_Run([text_delta("hel")])) == [{"data": "hel"}]
+def test_stream_projection_preserves_order_multiplicity_and_public_fields() -> None:
+    cases = (
+        (text_delta("hel"), [{"data": "hel"}]),
+        (text_delta("日本語\n "), [{"data": "日本語\n "}]),
+        (text_delta(""), []),
+        (
+            tool_call("make_file", "call_1"),
+            [{"current_tool_use": {"name": "make_file", "toolUseId": "call_1"}}],
+        ),
+        (
+            tool_call("other", "call_2"),
+            [{"current_tool_use": {"name": "other", "toolUseId": "call_2"}}],
+        ),
+        (
+            tool_output("a long tool log", "call_1"),
+            [{"tool_result": {"toolUseId": "call_1", "status": "success"}}],
+        ),
+        (
+            tool_output("other log", "call_2"),
+            [{"tool_result": {"toolUseId": "call_2", "status": "success"}}],
+        ),
+    )
+    for size in range(4):
+        for selected in product(cases, repeat=size):
+            run = _Run([event for event, _ in selected])
+            assert rendered(run) == [
+                event for _, output in selected for event in output
+            ], selected
 
 
-def test_empty_text_delta_yields_nothing() -> None:
-    assert rendered(_Run([text_delta("")])) == []
+def test_selected_tool_files_preserve_every_payload_and_its_position() -> None:
+    for raw in (b"doc", b"blob", b"img", b"\x00", bytes(range(256))):
+        data = encoded(raw)
+        pairs = (
+            (
+                {
+                    "type": "input_file",
+                    "file_data": f"data:application/pdf;base64,{data}",
+                },
+                {"file": {"name": "file.pdf", "bytes": data}},
+            ),
+            (
+                {"type": "input_file", "file_data": data},
+                {"file": {"name": "file.bin", "bytes": data}},
+            ),
+            (
+                {"type": "input_image", "image_url": f"data:image/png;base64,{data}"},
+                {"file": {"name": "image.png", "bytes": data}},
+            ),
+        )
+        for size in range(3):
+            for selected in product(pairs, repeat=size):
+                output = [part for part, _ in selected]
+                before = deepcopy(output)
+                for tool_name in ("make_file", "other"):
+                    for allowed in (set(), {"make_file"}, {"other"}):
+                        run = _Run([tool_call(tool_name), tool_output(output)])
+                        expected = [
+                            {
+                                "current_tool_use": {
+                                    "name": tool_name,
+                                    "toolUseId": "call_1",
+                                }
+                            },
+                            {
+                                "tool_result": {
+                                    "toolUseId": "call_1",
+                                    "status": "success",
+                                }
+                            },
+                        ]
+                        if tool_name in allowed:
+                            expected.extend(event for _, event in selected)
+                        assert rendered(run, files_from=allowed) == expected
+                        assert output == before
 
 
 def test_reasoning_delta_stays_off_the_wire() -> None:
@@ -146,12 +217,6 @@ def test_refusal_delta_becomes_a_data_event() -> None:
     assert rendered(_Run([refusal])) == [{"data": "I can't help with that."}]
 
 
-def test_tool_call_becomes_a_current_tool_use_event() -> None:
-    assert rendered(_Run([tool_call("make_file", "call_1")])) == [
-        {"current_tool_use": {"name": "make_file", "toolUseId": "call_1"}}
-    ]
-
-
 def test_tool_call_without_id_stays_off_the_wire() -> None:
     nameless = RunItemStreamEvent(
         item=ToolCallItem(agent=agent, raw_item={"name": "make_file"}),
@@ -159,12 +224,6 @@ def test_tool_call_without_id_stays_off_the_wire() -> None:
     )
 
     assert rendered(_Run([nameless])) == []
-
-
-def test_tool_output_is_slimmed_to_id_and_status() -> None:
-    events = rendered(_Run([tool_call(), tool_output("a long tool log")]))
-
-    assert events[1] == {"tool_result": {"toolUseId": "call_1", "status": "success"}}
 
 
 def test_files_of_a_tool_named_in_files_from_follow_the_result() -> None:
@@ -216,43 +275,6 @@ def test_the_calls_a_resumed_run_carries_name_its_tools() -> None:
     )
 
     assert events[1] == {"file": {"name": "x.csv", "bytes": encoded(b"x")}}
-
-
-def test_file_data_url_names_the_file_by_its_media_type() -> None:
-    output = [
-        {
-            "type": "input_file",
-            "file_data": f"data:application/pdf;base64,{encoded(b'doc')}",
-        }
-    ]
-
-    events = rendered(
-        _Run([tool_call(), tool_output(output)]), files_from={"make_file"}
-    )
-
-    assert events[2] == {"file": {"name": "file.pdf", "bytes": encoded(b"doc")}}
-
-
-def test_bare_file_data_without_a_name_falls_back_to_bin() -> None:
-    output = [{"type": "input_file", "file_data": encoded(b"blob")}]
-
-    events = rendered(
-        _Run([tool_call(), tool_output(output)]), files_from={"make_file"}
-    )
-
-    assert events[2] == {"file": {"name": "file.bin", "bytes": encoded(b"blob")}}
-
-
-def test_image_data_url_becomes_a_file_event() -> None:
-    output = [
-        {"type": "input_image", "image_url": f"data:image/png;base64,{encoded(b'img')}"}
-    ]
-
-    events = rendered(
-        _Run([tool_call(), tool_output(output)]), files_from={"make_file"}
-    )
-
-    assert events[2] == {"file": {"name": "image.png", "bytes": encoded(b"img")}}
 
 
 def test_media_subtypes_that_are_not_extensions_are_mapped() -> None:
