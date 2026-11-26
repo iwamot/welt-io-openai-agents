@@ -53,6 +53,8 @@ agentcore deploy
 
 The agent reaches the model through Bedrock's OpenAI-compatible endpoint, so the deployed runtime needs `AWS_BEARER_TOKEN_BEDROCK` — a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) — in its environment, plus `MODEL_ID` for a model other than the default `google.gemma-4-31b` and `BEDROCK_REGION` for an endpoint region other than the one the runtime resolves. All three go in the `--environment-variables` object.
 
+Generate that key with an expiration: it stays in the runtime's environment for as long as the runtime exists, and AWS [recommends restricting Bedrock API keys to exploration](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html).
+
 `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
 
 ### Verify the Deployment
@@ -86,6 +88,8 @@ Take the runtime out of the project and deploy the empty project, which deletes 
 agentcore remove runtime --name WeltExample
 agentcore deploy --yes
 ```
+
+Then delete the Bedrock API key in the Amazon Bedrock console.
 
 ## Tools
 
