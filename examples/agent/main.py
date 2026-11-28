@@ -8,6 +8,9 @@ conversation turn, or the answers that resume an interrupted run),
 decodes it, and runs the agent on the result; `renderable_events` reduces
 what it streams.
 
+A run that stops for approval is kept in S3 until its buttons are answered,
+below, so that the answers can resume it wherever they arrive.
+
 The model runs on Amazon Bedrock through the OpenAI-compatible
 `bedrock-mantle` endpoint, so the OpenAI client needs nothing beyond a
 different base URL and a Bedrock API key — no OpenAI account is involved.
@@ -16,7 +19,9 @@ This example is a standalone deployable; Welt drives it only through the
 JSON wire contract, which welt-io-openai-agents adapts in both directions.
 """
 
+import asyncio
 import base64
+import json
 import os
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -26,6 +31,7 @@ import boto3
 from agents import (
     Agent,
     OpenAIResponsesModel,
+    RunState,
     function_tool,
     set_tracing_disabled,
 )
@@ -199,25 +205,64 @@ agent = Agent(
 # its files to the model.
 _FILES_FROM = {"create_sample_file", "sample_draft_report"}
 
-# The states of the runs that stopped for approval, under the ids of the
-# approvals they stopped on — Welt sends those ids back when the buttons
-# are answered. An entry lives as long as this process: AgentCore Runtime
-# gives each session its own microVM, so a resume that arrives after it
-# was recycled finds nothing and raises, which Welt renders as its
-# resume-failure notice.
-_interrupted: dict[str, InterruptedState] = {}
+# The states of the runs that stopped for approval are kept in this bucket,
+# one object per approval they stopped on, under
+# `interrupted/<approval id>.json` — Welt sends those ids back when the
+# buttons are answered. The answers may arrive at another process than the
+# one that stopped: AgentCore Runtime recycles a session's microVM, and
+# Lambda keeps no request on the environment of the one before it. A
+# lifecycle rule on the prefix clears the runs nobody answered. The calls
+# are boto3's, which block, so they run on a thread: one process serves
+# several requests on its event loop.
+_bucket = os.environ["SESSION_BUCKET"]
+_s3 = boto3.client("s3")
 
 
-def _resumed(answers: Mapping[str, object]) -> InterruptedState:
+def _held_key(approval_id: str) -> str:
+    return f"interrupted/{approval_id}.json"
+
+
+def _hold(state: InterruptedState, approval_ids: list[str]) -> None:
     """
-    Take the state the answered approvals belong to out of the map.
+    Keep a stopped run's state until its approvals are answered.
+
+    The state serializes to the SDK's own JSON, which `RunState.from_string`
+    reads back against this file's agent. Every id of the stop gets the
+    same object, since the answers name any of them.
+
+    Args:
+        state (InterruptedState): The state the run stopped with.
+        approval_ids (list[str]): The ids of the approvals it stopped on.
+    """
+    # The adapter types the state by the little it uses of it; what the run
+    # hands back is the SDK's RunState, which serializes itself.
+    assert isinstance(state, RunState)
+    body = json.dumps({"approval_ids": approval_ids, "state": state.to_string()})
+    for approval_id in approval_ids:
+        _s3.put_object(Bucket=_bucket, Key=_held_key(approval_id), Body=body)
+
+
+def _held(approval_id: str) -> dict | None:
+    try:
+        held = _s3.get_object(Bucket=_bucket, Key=_held_key(approval_id))
+    except _s3.exceptions.NoSuchKey:
+        return None
+    return json.loads(held["Body"].read())
+
+
+def _release(approval_ids: list[str]) -> None:
+    for approval_id in approval_ids:
+        _s3.delete_object(Bucket=_bucket, Key=_held_key(approval_id))
+
+
+async def _resumed(answers: Mapping[str, object]) -> InterruptedState:
+    """
+    Take the held state the answered approvals belong to.
 
     A stop's questions are answered together, so every id in one payload
-    names the same run, and any answered id finds it. The whole stop
-    leaves the map with it: the ids the stop raised all hold that one
-    state, and identity is what tells them from the ids of another stop.
-    The values the answers carry are not read here — the adapter reads
-    them when it applies them to the state.
+    names the same run, and any answered id finds it; the whole stop is
+    dropped here. The values the answers carry are not read here — the
+    adapter reads them when it applies them to the state.
 
     Args:
         answers (Mapping): Welt's `interrupt_responses`, keyed by the
@@ -227,15 +272,17 @@ def _resumed(answers: Mapping[str, object]) -> InterruptedState:
         InterruptedState: The state that resumes the answers.
 
     Raises:
-        RuntimeError: If no answered id is held — this process no longer
-            has the run, so there is nothing to resume.
+        RuntimeError: If no answered id is held — the run was answered
+            already or cleared, so there is nothing to resume.
     """
-    state = next((_interrupted[i] for i in answers if i in _interrupted), None)
-    if state is None:
-        raise RuntimeError("No interrupted run to resume in this session.")
-    for approval_id in [i for i, held in _interrupted.items() if held is state]:
-        del _interrupted[approval_id]
-    return state
+    for approval_id in answers:
+        held = await asyncio.to_thread(_held, approval_id)
+        if held is None:
+            continue
+        state = await RunState.from_string(agent, held["state"])
+        await asyncio.to_thread(_release, held["approval_ids"])
+        return state
+    raise RuntimeError("No interrupted run to resume in this session.")
 
 
 @app.entrypoint
@@ -253,21 +300,23 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
     if "interrupt_responses" in payload:
         # The envelope key says which of the two arrived; a turn carries
         # no answers and needs no state.
-        state = _resumed(payload["interrupt_responses"])
+        state = await _resumed(payload["interrupt_responses"])
 
     result = start_reply(agent, payload, state=state)
     state_of_stop: InterruptedState | None = None
+    approval_ids: list[str] = []
     async for event in renderable_events(result, files_from=_FILES_FROM):
         interrupt = event.get("interrupt")
         if interrupt is not None:
             # The run stopped here, and its state is what answers these
             # questions when the buttons come back. One snapshot serves
-            # the whole stop: every id points at the same object, which
-            # is what lets `_resumed` release the stop as one.
+            # the whole stop.
             if state_of_stop is None:
                 state_of_stop = result.to_state()
-            _interrupted[interrupt["id"]] = state_of_stop
+            approval_ids.append(interrupt["id"])
         yield event
+    if state_of_stop is not None:
+        await asyncio.to_thread(_hold, state_of_stop, approval_ids)
 
 
 if __name__ == "__main__":
