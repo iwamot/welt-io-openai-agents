@@ -38,7 +38,7 @@ if __name__ == "__main__":
     app.run()
 ```
 
-To see it in Slack, run the file (`uv run main.py`). It serves on port 8080, where Welt's local mode reaches it, so follow [Welt's Quick Start](https://github.com/iwamot/welt#quick-start) with this file in place of the example agent. To deploy, follow the example's [Deploy](examples/agent#deploy) section with this file in place of the downloaded `main.py`, then point Welt's `AGENT_ARN` at the runtime.
+To see it in Slack, run the file (`uv run main.py`). It serves on port 8080, where Welt's local mode reaches it, so follow [Welt's Quick Start](https://github.com/iwamot/welt#quick-start) with this file in place of the example agent. To deploy, follow the example's [AgentCore Runtime](examples/agent#deploy-to-agentcore-runtime) or [Lambda Web Functions](examples/agent#deploy-to-aws-lambda-web-functions) section with this file in place of the downloaded `main.py`, then point Welt's `AGENT_ARN` at the runtime, or its `AGENT_URL` at the Web Function.
 
 See [`examples/agent`](examples/agent) for the full version — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools), with the model on Amazon Bedrock's OpenAI-compatible endpoint instead of the OpenAI platform. The sections below cover the entrypoint and the adapters it wires in.
 
@@ -173,7 +173,7 @@ A run that stops on approvals ends its stream with one `interrupt` event per pen
 
 On the SDK side:
 
-- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM, for as long as that microVM lives: a question left open past that can no longer be resumed ([Expiry](https://github.com/iwamot/welt/blob/main/docs/interrupts.md#behavior-details)).
+- **Resume is a state round trip.** An interrupted `Runner.run_streamed` result yields its `RunState` via `to_state()`. The host app stashes it, and hands it back to `start_reply` with the answers, which applies them and runs the same agent again on it. An in-memory stash works on AgentCore Runtime, where each session keeps its own microVM, for as long as that microVM lives: a question left open past that can no longer be resumed ([Expiry](https://github.com/iwamot/welt/blob/main/docs/interrupts.md#behavior-details)). `RunState.to_string()` and `RunState.from_string()` carry the state through storage instead, which also resumes on hosts that route an answer to any environment, such as Lambda Web Functions; the [example agent](examples/agent) keeps it in S3.
 - **Welt resumes once every question is answered.** There is no partial resume on the wire, so the state's approvals are all applied in one call.
 - **Tell the model what a rejection means.** A rejected call reaches the model as the tool's result, `Tool execution was not approved.`, and a model can read past that and report the action as done. The [example agent](examples/agent)'s `instructions` carry a rule against it.
 - **Approved tools run on the resumed stream.** Their calls streamed before the interrupt, and the resumed run carries them in `new_items`, which is what keeps their files flowing to the thread.
